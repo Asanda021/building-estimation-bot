@@ -1,468 +1,138 @@
-import os
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
-
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
-
-
 # ==========================================
-# Web Server برای Render
+# برآورد بتن سقف
 # ==========================================
 
-class HealthHandler(BaseHTTPRequestHandler):
+ROOF_TYPES = {
+    "fa": [
+        ("تیرچه یونولیتی", "roof_0"),
+        ("تیرچه سفالی", "roof_1"),
+        ("تیرچه دوبل", "roof_2"),
+        ("کرومیت", "roof_3"),
+        ("کامپوزیت", "roof_4"),
+        ("عرشه فولادی", "roof_5"),
+        ("دال بتنی", "roof_6"),
+        ("وافل", "roof_7"),
+    ],
 
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Building Estimation Bot is running!")
-
-    def log_message(self, format, *args):
-        pass
-
-
-def run_web_server():
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", port), HealthHandler)
-    server.serve_forever()
-
-
-# ==========================================
-# متن‌ها
-# ==========================================
-
-TEXTS = {
-
-    "fa": {
-        "welcome": "🏗️ به ربات برآورد ساختمان خوش آمدید!\n\n🌐 زبان خود را انتخاب کنید:",
-        "new_estimate": "🏗️ برآورد ساختمان جدید",
-        "projects": "📂 پروژه‌های من",
-        "settings": "⚙️ تنظیمات",
-        "help": "ℹ️ راهنما",
-        "menu": "🏠 منوی اصلی",
-
-        "enter_area": "📐 مساحت هر طبقه را وارد کنید:\nمثال: 150",
-        "enter_floors": "🏢 تعداد طبقات را وارد کنید:\nمثال: 5",
-        "enter_basements": "⬇️ تعداد زیرزمین را وارد کنید:\nمثال: 1",
-
-        "choose_structure": "🏗️ نوع سازه را انتخاب کنید:",
-
-        "concrete": "🏢 اسکلت بتنی",
-        "steel": "🔩 اسکلت فلزی",
-
-        "building_saved": "✅ اطلاعات ساختمان ثبت شد.",
-
-        "choose_estimation": "📋 چه چیزی را می‌خواهید برآورد کنید؟",
-
-        "concrete_estimate": "🧱 بتن",
-        "rebar_estimate": "🔩 میلگرد",
-        "both_estimate": "🏗️ بتن و میلگرد",
-        "back": "🔙 بازگشت",
-    },
-
-    "en": {
-        "welcome": "🏗️ Welcome to Building Estimation Bot!\n\n🌐 Choose your language:",
-        "new_estimate": "🏗️ New Building Estimate",
-        "projects": "📂 My Projects",
-        "settings": "⚙️ Settings",
-        "help": "ℹ️ Help",
-        "menu": "🏠 Main Menu",
-
-        "enter_area": "📐 Enter the area of each floor:\nExample: 150",
-        "enter_floors": "🏢 Enter the number of floors:\nExample: 5",
-        "enter_basements": "⬇️ Enter the number of basements:\nExample: 1",
-
-        "choose_structure": "🏗️ Choose the structural system:",
-
-        "concrete": "🏢 Reinforced Concrete",
-        "steel": "🔩 Steel Structure",
-
-        "building_saved": "✅ Building information saved.",
-
-        "choose_estimation": "📋 What would you like to estimate?",
-
-        "concrete_estimate": "🧱 Concrete",
-        "rebar_estimate": "🔩 Rebar",
-        "both_estimate": "🏗️ Concrete & Rebar",
-        "back": "🔙 Back",
-    }
+    "en": [
+        ("Block & Joist (EPS)", "roof_0"),
+        ("Clay Block & Joist", "roof_1"),
+        ("Double Joist", "roof_2"),
+        ("Kromit", "roof_3"),
+        ("Composite", "roof_4"),
+        ("Steel Deck", "roof_5"),
+        ("Concrete Slab", "roof_6"),
+        ("Waffle", "roof_7"),
+    ]
 }
 
 
-# ==========================================
-# /start
-# ==========================================
+ROOF_COEFFICIENTS = {
+    0: 0.18,
+    1: 0.20,
+    2: 0.23,
+    3: 0.18,
+    4: 0.15,
+    5: 0.15,
+    6: 0.20,
+    7: 0.20,
+}
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    context.user_data.clear()
+async def start_concrete_estimate(update, context):
 
-    keyboard = [
-        [
-            InlineKeyboardButton("🇮🇷 فارسی", callback_data="lang_fa"),
-            InlineKeyboardButton("🇬🇧 English", callback_data="lang_en"),
-        ]
-    ]
+    query = update.callback_query
+    await query.answer()
 
-    await update.message.reply_text(
-        TEXTS["fa"]["welcome"],
+    lang = context.user_data.get("language", "fa")
+
+    keyboard = []
+
+    for name, callback in ROOF_TYPES[lang]:
+        keyboard.append([
+            InlineKeyboardButton(
+                name,
+                callback_data=callback
+            )
+        ])
+
+    await query.edit_message_text(
+        "🏗️ نوع سقف را انتخاب کنید:" if lang == "fa"
+        else "🏗️ Select the roof type:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 
-# ==========================================
-# انتخاب زبان
-# ==========================================
-
-async def language_selected(update, context):
+async def roof_selected(update, context):
 
     query = update.callback_query
     await query.answer()
 
-    lang = query.data.replace("lang_", "")
+    lang = context.user_data.get("language", "fa")
 
-    context.user_data["language"] = lang
+    roof_number = int(query.data.split("_")[1])
 
-    await show_main_menu(query, lang)
-
-
-# ==========================================
-# منوی اصلی
-# ==========================================
-
-async def show_main_menu(query, lang):
-
-    t = TEXTS[lang]
-
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                t["new_estimate"],
-                callback_data="new_estimate"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                t["projects"],
-                callback_data="projects"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                t["settings"],
-                callback_data="settings"
-            ),
-            InlineKeyboardButton(
-                t["help"],
-                callback_data="help"
-            )
-        ]
-    ]
+    context.user_data["roof_number"] = roof_number
+    context.user_data["step"] = "roof_area"
 
     await query.edit_message_text(
-        t["menu"],
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        "📐 مساحت سقف را وارد کنید (m²):"
+        if lang == "fa"
+        else
+        "📐 Enter the roof area (m²):"
     )
 
 
-# ==========================================
-# شروع برآورد جدید
-# ==========================================
+async def concrete_area_received(update, context):
 
-async def start_estimate(update, context):
-
-    query = update.callback_query
-    await query.answer()
+    if context.user_data.get("step") != "roof_area":
+        return
 
     lang = context.user_data.get("language", "fa")
 
-    context.user_data["step"] = "area"
+    try:
+        area = float(update.message.text.strip())
 
-    await query.edit_message_text(
-        TEXTS[lang]["enter_area"]
-    )
+        if area <= 0:
+            raise ValueError
 
+    except ValueError:
 
-# ==========================================
-# دریافت اطلاعات متنی
-# ==========================================
-
-async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    lang = context.user_data.get("language", "fa")
-    step = context.user_data.get("step")
-
-    text = update.message.text.strip()
-
-    # --------------------------
-    # مساحت
-    # --------------------------
-
-    if step == "area":
-
-        try:
-            area = float(text)
-
-            if area <= 0:
-                raise ValueError
-
-            context.user_data["area"] = area
-            context.user_data["step"] = "floors"
-
-            await update.message.reply_text(
-                TEXTS[lang]["enter_floors"]
-            )
-
-        except ValueError:
-
-            await update.message.reply_text(
-                "❌ مقدار واردشده صحیح نیست.\n"
-                + TEXTS[lang]["enter_area"]
-            )
-
-    # --------------------------
-    # تعداد طبقات
-    # --------------------------
-
-    elif step == "floors":
-
-        try:
-            floors = int(text)
-
-            if floors <= 0:
-                raise ValueError
-
-            context.user_data["floors"] = floors
-            context.user_data["step"] = "basements"
-
-            await update.message.reply_text(
-                TEXTS[lang]["enter_basements"]
-            )
-
-        except ValueError:
-
-            await update.message.reply_text(
-                "❌ لطفاً یک عدد صحیح وارد کنید.\n"
-                + TEXTS[lang]["enter_floors"]
-            )
-
-    # --------------------------
-    # زیرزمین
-    # --------------------------
-
-    elif step == "basements":
-
-        try:
-            basements = int(text)
-
-            if basements < 0:
-                raise ValueError
-
-            context.user_data["basements"] = basements
-            context.user_data["step"] = None
-
-            keyboard = [
-                [
-                    InlineKeyboardButton(
-                        TEXTS[lang]["concrete"],
-                        callback_data="structure_concrete"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        TEXTS[lang]["steel"],
-                        callback_data="structure_steel"
-                    )
-                ]
-            ]
-
-            await update.message.reply_text(
-                TEXTS[lang]["choose_structure"],
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-
-        except ValueError:
-
-            await update.message.reply_text(
-                "❌ لطفاً یک عدد صحیح وارد کنید.\n"
-                + TEXTS[lang]["enter_basements"]
-            )
-
-
-# ==========================================
-# انتخاب نوع سازه
-# ==========================================
-
-async def structure_selected(update, context):
-
-    query = update.callback_query
-    await query.answer()
-
-    lang = context.user_data.get("language", "fa")
-
-    structure = query.data.replace("structure_", "")
-
-    context.user_data["structure"] = structure
-
-    await query.edit_message_text(
-        TEXTS[lang]["building_saved"]
-    )
-
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                TEXTS[lang]["concrete_estimate"],
-                callback_data="estimate_concrete"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                TEXTS[lang]["rebar_estimate"],
-                callback_data="estimate_rebar"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                TEXTS[lang]["both_estimate"],
-                callback_data="estimate_both"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                TEXTS[lang]["back"],
-                callback_data="main_menu"
-            )
-        ]
-    ]
-
-    await query.message.reply_text(
-        TEXTS[lang]["choose_estimation"],
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-
-# ==========================================
-# سایر دکمه‌ها
-# ==========================================
-
-async def button_handler(update, context):
-
-    query = update.callback_query
-    await query.answer()
-
-    lang = context.user_data.get("language", "fa")
-
-    if query.data == "projects":
-
-        text = (
-            "📂 پروژه‌های شما\n\nفعلاً پروژه‌ای ثبت نشده است."
+        await update.message.reply_text(
+            "❌ لطفاً یک عدد معتبر وارد کنید."
             if lang == "fa"
             else
-            "📂 Your Projects\n\nNo projects have been saved yet."
+            "❌ Please enter a valid number."
         )
 
-        await query.edit_message_text(text)
+        return
 
-    elif query.data == "settings":
+    roof_number = context.user_data["roof_number"]
 
-        text = "⚙️ تنظیمات" if lang == "fa" else "⚙️ Settings"
+    coefficient = ROOF_COEFFICIENTS[roof_number]
 
-        await query.edit_message_text(text)
+    concrete_volume = area * coefficient
 
-    elif query.data == "help":
+    context.user_data["roof_area"] = area
+    context.user_data["roof_concrete"] = concrete_volume
+    context.user_data["step"] = None
+
+    if lang == "fa":
 
         text = (
-            "ℹ️ راهنما\n\n"
-            "این ربات برای برآورد مصالح و مقادیر ساختمان طراحی شده است."
-            if lang == "fa"
-            else
-            "ℹ️ Help\n\n"
-            "This bot is designed for building quantity and material estimation."
+            "🧱 برآورد بتن سقف\n\n"
+            f"مساحت سقف: {area:,.2f} m²\n"
+            f"ضریب بتن: {coefficient:.2f} m³/m²\n\n"
+            f"🔹 حجم بتن سقف: {concrete_volume:,.2f} m³"
         )
 
-        await query.edit_message_text(text)
-
-    elif query.data == "main_menu":
-
-        await show_main_menu(query, lang)
-
-    elif query.data.startswith("estimate_"):
+    else:
 
         text = (
-            "🔧 این بخش در مرحله بعد ساخته می‌شود."
-            if lang == "fa"
-            else
-            "🔧 This section will be built in the next step."
+            "🧱 Roof Concrete Estimate\n\n"
+            f"Roof area: {area:,.2f} m²\n"
+            f"Concrete coefficient: {coefficient:.2f} m³/m²\n\n"
+            f"🔹 Roof concrete: {concrete_volume:,.2f} m³"
         )
 
-        await query.edit_message_text(text)
-
-
-# ==========================================
-# اجرای ربات
-# ==========================================
-
-def main():
-
-    token = os.getenv("BOT_TOKEN")
-
-    if not token:
-        raise ValueError("BOT_TOKEN is not set")
-
-    threading.Thread(
-        target=run_web_server,
-        daemon=True
-    ).start()
-
-    app = Application.builder().token(token).build()
-
-    app.add_handler(CommandHandler("start", start))
-
-    app.add_handler(
-        CallbackQueryHandler(
-            language_selected,
-            pattern="^lang_(fa|en)$"
-        )
-    )
-
-    app.add_handler(
-        CallbackQueryHandler(
-            start_estimate,
-            pattern="^new_estimate$"
-        )
-    )
-
-    app.add_handler(
-        CallbackQueryHandler(
-            structure_selected,
-            pattern="^structure_(concrete|steel)$"
-        )
-    )
-
-    app.add_handler(
-        CallbackQueryHandler(
-            button_handler
-        )
-    )
-
-    app.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            receive_text
-        )
-    )
-
-    print("Building Estimation Bot is running...")
-
-    app.run_polling()
-
-
-if __name__ == "__main__":
-    main()
+    await update.message.reply_text(text)
