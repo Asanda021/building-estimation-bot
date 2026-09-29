@@ -17,6 +17,7 @@ from calculations import (
     isolated_footing,
     strip_footing,
     raft_foundation,
+    optimize_12m_bars,
 )
 
 
@@ -101,7 +102,6 @@ TEXTS = {
             "این ربات برای متره و برآورد مصالح ساختمان "
             "بر اساس اطلاعات واقعی پروژه طراحی می‌شود.\n\n"
             "ربات خودش ابعاد یا آرماتور سازه را حدس نمی‌زند.",
-
     },
 
     "en": {
@@ -144,7 +144,6 @@ TEXTS = {
             "This bot estimates building materials "
             "from actual project data.\n\n"
             "It does not guess structural dimensions or reinforcement.",
-
     }
 }
 
@@ -254,7 +253,7 @@ def twelve_meter_bars(length_m):
 
 
 # =========================================================
-# Rebar Detail Formatter
+# Rebar Detail + Cut List Formatter
 # =========================================================
 
 def format_rebar_details(
@@ -270,10 +269,14 @@ def format_rebar_details(
         key=lambda x: x["diameter_mm"]
     )
 
+    # =====================================================
+    # فارسی
+    # =====================================================
+
     if lang == "fa":
 
         message = (
-            "🔩 <b>تفکیک میلگرد بر اساس قطر</b>\n\n"
+            "🔩 <b>تفکیک و لیست برش میلگرد</b>\n\n"
         )
 
         for item in details:
@@ -283,43 +286,233 @@ def format_rebar_details(
             weight = item["weight_kg"]
             bars = item["bars_12m"]
 
+            piece_count = item.get(
+                "piece_count",
+                len(
+                    item.get(
+                        "piece_lengths_m",
+                        []
+                    )
+                )
+            )
+
+            waste = item.get(
+                "waste_m",
+                0
+            )
+
+            description = item.get(
+                "description",
+                ""
+            )
+
             message += (
+                "━━━━━━━━━━━━━━\n"
                 f"🔹 <b>Φ{diameter}</b>\n"
-                f"   📏 طول کل: {length:.1f} m\n"
+            )
+
+            if description:
+
+                message += (
+                    f"   📌 {description}\n"
+                )
+
+            message += (
+                f"   🔢 تعداد قطعه: {piece_count} عدد\n"
+                f"   📏 طول کل: {length:.2f} m\n"
                 f"   ⚖️ وزن: {weight:.1f} kg\n"
-                f"   📦 شاخه ۱۲ متری: {bars} عدد\n\n"
+                f"   📦 شاخه ۱۲ متری: {bars} عدد\n"
+                f"   ♻️ پرت برش: {waste:.2f} m\n\n"
             )
+
+            # -------------------------------------------------
+            # Cut List
+            # -------------------------------------------------
+
+            cut_plan = item.get(
+                "cut_plan",
+                []
+            )
+
+            if cut_plan:
+
+                message += (
+                    "✂️ <b>Cut List:</b>\n"
+                )
+
+                # برای جلوگیری از خیلی طولانی شدن پیام
+                max_plans = 15
+
+                for index, plan in enumerate(
+                    cut_plan[:max_plans],
+                    start=1
+                ):
+
+                    pieces = plan.get(
+                        "pieces",
+                        []
+                    )
+
+                    used = plan.get(
+                        "used_m",
+                        0
+                    )
+
+                    plan_waste = plan.get(
+                        "waste_m",
+                        0
+                    )
+
+                    pieces_text = " + ".join(
+                        f"{p:.2f}"
+                        for p in pieces
+                    )
+
+                    message += (
+                        f"   شاخه {index}: "
+                        f"{pieces_text}"
+                        f" = {used:.2f} m"
+                        f" | پرت {plan_waste:.2f} m\n"
+                    )
+
+                if len(cut_plan) > max_plans:
+
+                    remaining = (
+                        len(cut_plan)
+                        - max_plans
+                    )
+
+                    message += (
+                        f"   ... و {remaining} شاخه دیگر\n"
+                    )
+
+                message += "\n"
 
         return message
 
-    else:
+    # =====================================================
+    # English
+    # =====================================================
 
-        message = (
-            "🔩 <b>Rebar Breakdown by Diameter</b>\n\n"
+    message = (
+        "🔩 <b>Rebar Breakdown & Cut List</b>\n\n"
+    )
+
+    for item in details:
+
+        diameter = item["diameter_mm"]
+        length = item["length_m"]
+        weight = item["weight_kg"]
+        bars = item["bars_12m"]
+
+        piece_count = item.get(
+            "piece_count",
+            len(
+                item.get(
+                    "piece_lengths_m",
+                    []
+                )
+            )
         )
 
-        for item in details:
+        waste = item.get(
+            "waste_m",
+            0
+        )
 
-            diameter = item["diameter_mm"]
-            length = item["length_m"]
-            weight = item["weight_kg"]
-            bars = item["bars_12m"]
+        description = item.get(
+            "description",
+            ""
+        )
+
+        message += (
+            "━━━━━━━━━━━━━━\n"
+            f"🔹 <b>Φ{diameter}</b>\n"
+        )
+
+        if description:
 
             message += (
-                f"🔹 <b>Φ{diameter}</b>\n"
-                f"   📏 Total length: {length:.1f} m\n"
-                f"   ⚖️ Weight: {weight:.1f} kg\n"
-                f"   📦 12m bars: {bars}\n\n"
+                f"   📌 {description}\n"
             )
 
-        return message
+        message += (
+            f"   🔢 Pieces: {piece_count}\n"
+            f"   📏 Total length: {length:.2f} m\n"
+            f"   ⚖️ Weight: {weight:.1f} kg\n"
+            f"   📦 12m bars: {bars}\n"
+            f"   ♻️ Cutting waste: {waste:.2f} m\n\n"
+        )
+
+        cut_plan = item.get(
+            "cut_plan",
+            []
+        )
+
+        if cut_plan:
+
+            message += (
+                "✂️ <b>Cut List:</b>\n"
+            )
+
+            max_plans = 15
+
+            for index, plan in enumerate(
+                cut_plan[:max_plans],
+                start=1
+            ):
+
+                pieces = plan.get(
+                    "pieces",
+                    []
+                )
+
+                used = plan.get(
+                    "used_m",
+                    0
+                )
+
+                plan_waste = plan.get(
+                    "waste_m",
+                    0
+                )
+
+                pieces_text = " + ".join(
+                    f"{p:.2f}"
+                    for p in pieces
+                )
+
+                message += (
+                    f"   Bar {index}: "
+                    f"{pieces_text}"
+                    f" = {used:.2f} m"
+                    f" | waste {plan_waste:.2f} m\n"
+                )
+
+            if len(cut_plan) > max_plans:
+
+                remaining = (
+                    len(cut_plan)
+                    - max_plans
+                )
+
+                message += (
+                    f"   ... and {remaining} more bars\n"
+                )
+
+            message += "\n"
+
+    return message
 
 
 # =========================================================
 # Start
 # =========================================================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     context.user_data.clear()
 
@@ -392,6 +585,8 @@ async def foundation_selected(
 ):
 
     query = update.callback_query
+
+    await query.answer()
 
     lang = context.user_data.get(
         "lang",
@@ -552,10 +747,6 @@ async def receive_text(
 
         return
 
-    # -----------------------------------------------------
-    # Bottom Rebar
-    # -----------------------------------------------------
-
     if step == "iso_thickness":
 
         context.user_data["iso_thickness"] = value
@@ -584,10 +775,6 @@ async def receive_text(
 
         return
 
-    # -----------------------------------------------------
-    # Top Rebar
-    # -----------------------------------------------------
-
     if step == "iso_bottom_spacing":
 
         context.user_data["iso_bottom_spacing"] = int(value)
@@ -615,10 +802,6 @@ async def receive_text(
         )
 
         return
-
-    # -----------------------------------------------------
-    # Pedestal
-    # -----------------------------------------------------
 
     if step == "iso_top_spacing":
 
@@ -666,10 +849,6 @@ async def receive_text(
 
         return
 
-    # -----------------------------------------------------
-    # Starter bars
-    # -----------------------------------------------------
-
     if step == "iso_pedestal_height":
 
         context.user_data["iso_pedestal_height"] = value
@@ -713,7 +892,7 @@ async def receive_text(
         return
 
     # =====================================================
-    # Final isolated calculation
+    # Final Isolated Calculation
     # =====================================================
 
     if step == "iso_starter_length":
@@ -737,44 +916,84 @@ async def receive_text(
                 lean_concrete_thickness_m=0,
 
                 bottom_diameter_mm=
-                    context.user_data["iso_bottom_diameter"],
+                    context.user_data[
+                        "iso_bottom_diameter"
+                    ],
 
                 bottom_spacing_mm=
-                    context.user_data["iso_bottom_spacing"],
+                    context.user_data[
+                        "iso_bottom_spacing"
+                    ],
 
                 top_diameter_mm=
-                    context.user_data["iso_top_diameter"],
+                    context.user_data[
+                        "iso_top_diameter"
+                    ],
 
                 top_spacing_mm=
-                    context.user_data["iso_top_spacing"],
+                    context.user_data[
+                        "iso_top_spacing"
+                    ],
 
                 pedestal_length_m=
-                    context.user_data["iso_pedestal_length"],
+                    context.user_data[
+                        "iso_pedestal_length"
+                    ],
 
                 pedestal_width_m=
-                    context.user_data["iso_pedestal_width"],
+                    context.user_data[
+                        "iso_pedestal_width"
+                    ],
 
                 pedestal_height_m=
-                    context.user_data["iso_pedestal_height"],
+                    context.user_data[
+                        "iso_pedestal_height"
+                    ],
             )
 
             # -------------------------------------------------
-            # Starter bars
+            # Starter Bars
             # -------------------------------------------------
 
-            starter_length_total = (
+            starter_diameter = (
+                context.user_data[
+                    "iso_starter_diameter"
+                ]
+            )
+
+            starter_piece_length = (
+                context.user_data[
+                    "iso_starter_length"
+                ]
+            )
+
+            starter_piece_count = (
                 context.user_data["iso_count"]
                 * context.user_data["iso_starter_count"]
-                * context.user_data["iso_starter_length"]
+            )
+
+            starter_piece_lengths = [
+                starter_piece_length
+                for _ in range(
+                    starter_piece_count
+                )
+            ]
+
+            starter_length_total = sum(
+                starter_piece_lengths
             )
 
             starter_weight = steel_weight(
                 starter_length_total,
-                context.user_data["iso_starter_diameter"]
+                starter_diameter
             )
 
-            starter_bars_12m = twelve_meter_bars(
-                starter_length_total
+            starter_cut_plan = optimize_12m_bars(
+                starter_piece_lengths
+            )
+
+            starter_bars_12m = (
+                starter_cut_plan["stock_bars"]
             )
 
             total_rebar = (
@@ -783,7 +1002,7 @@ async def receive_text(
             )
 
             # -------------------------------------------------
-            # Rebar details
+            # Rebar Details
             # -------------------------------------------------
 
             rebar_details = list(
@@ -793,17 +1012,14 @@ async def receive_text(
                 )
             )
 
-            starter_diameter = (
-                context.user_data[
-                    "iso_starter_diameter"
-                ]
-            )
-
             starter_found = False
 
             for item in rebar_details:
 
-                if item["diameter_mm"] == starter_diameter:
+                if (
+                    item["diameter_mm"]
+                    == starter_diameter
+                ):
 
                     item["length_m"] += (
                         starter_length_total
@@ -813,9 +1029,50 @@ async def receive_text(
                         starter_weight
                     )
 
-                    item["bars_12m"] = twelve_meter_bars(
-                        item["length_m"]
+                    existing_pieces = item.get(
+                        "piece_lengths_m",
+                        []
                     )
+
+                    existing_pieces.extend(
+                        starter_piece_lengths
+                    )
+
+                    item["piece_lengths_m"] = (
+                        existing_pieces
+                    )
+
+                    item["piece_count"] = (
+                        len(existing_pieces)
+                    )
+
+                    optimization = optimize_12m_bars(
+                        existing_pieces
+                    )
+
+                    item["bars_12m"] = (
+                        optimization["stock_bars"]
+                    )
+
+                    item["waste_m"] = (
+                        optimization["waste_m"]
+                    )
+
+                    item["cut_plan"] = (
+                        optimization["plans"]
+                    )
+
+                    if item.get("description"):
+
+                        item["description"] += (
+                            " + پی منفرد - میلگرد انتظار"
+                        )
+
+                    else:
+
+                        item["description"] = (
+                            "پی منفرد - میلگرد انتظار"
+                        )
 
                     starter_found = True
 
@@ -824,6 +1081,7 @@ async def receive_text(
             if not starter_found:
 
                 rebar_details.append({
+
                     "diameter_mm":
                         starter_diameter,
 
@@ -835,10 +1093,26 @@ async def receive_text(
 
                     "bars_12m":
                         starter_bars_12m,
+
+                    "piece_count":
+                        starter_piece_count,
+
+                    "piece_lengths_m":
+                        starter_piece_lengths,
+
+                    "waste_m":
+                        starter_cut_plan["waste_m"],
+
+                    "cut_plan":
+                        starter_cut_plan["plans"],
+
+                    "description":
+                        "پی منفرد - میلگرد انتظار",
                 })
 
             rebar_details.sort(
-                key=lambda x: x["diameter_mm"]
+                key=lambda x:
+                    x["diameter_mm"]
             )
 
             message = (
@@ -854,7 +1128,10 @@ async def receive_text(
                 f"{result['pedestal_concrete_m3']:.2f} m³\n"
 
                 + f"🧱 جمع بتن سازه‌ای: "
-                f"<b>{result['footing_concrete_m3'] + result['pedestal_concrete_m3']:.2f} m³</b>\n\n"
+                f"<b>"
+                f"{result['footing_concrete_m3'] + result['pedestal_concrete_m3']:.2f}"
+                f" m³"
+                f"</b>\n\n"
 
                 + format_rebar_details(
                     rebar_details,
@@ -930,10 +1207,6 @@ async def receive_text(
 
         return
 
-    # =====================================================
-    # Strip bottom longitudinal
-    # =====================================================
-
     if step == "strip_thickness":
 
         context.user_data["strip_thickness"] = value
@@ -961,10 +1234,6 @@ async def receive_text(
         )
 
         return
-
-    # =====================================================
-    # Strip bottom transverse
-    # =====================================================
 
     if step == "strip_long_count":
 
@@ -994,10 +1263,6 @@ async def receive_text(
 
         return
 
-    # =====================================================
-    # Strip top longitudinal
-    # =====================================================
-
     if step == "strip_trans_spacing":
 
         context.user_data["strip_trans_spacing"] = int(value)
@@ -1025,10 +1290,6 @@ async def receive_text(
         )
 
         return
-
-    # =====================================================
-    # Strip top transverse
-    # =====================================================
 
     if step == "strip_top_long_count":
 
@@ -1059,35 +1320,43 @@ async def receive_text(
         return
 
     # =====================================================
-    # Final strip calculation
+    # Final Strip Calculation
     # =====================================================
 
     if step == "strip_top_trans_spacing":
 
-        context.user_data["strip_top_trans_spacing"] = int(value)
+        context.user_data[
+            "strip_top_trans_spacing"
+        ] = int(value)
 
         try:
 
             result = strip_footing(
 
                 strip_count=
-                    context.user_data["strip_count"],
+                    context.user_data[
+                        "strip_count"
+                    ],
 
                 strip_length_m=
-                    context.user_data["strip_length"],
+                    context.user_data[
+                        "strip_length"
+                    ],
 
                 footing_width_m=
-                    context.user_data["strip_width"],
+                    context.user_data[
+                        "strip_width"
+                    ],
 
                 footing_thickness_m=
-                    context.user_data["strip_thickness"],
+                    context.user_data[
+                        "strip_thickness"
+                    ],
 
-                # بتن مگر حذف شده
                 lean_length_m=0,
                 lean_width_m=0,
                 lean_thickness_m=0,
 
-                # تحتانی طولی
                 longitudinal_diameter_mm=
                     context.user_data[
                         "strip_long_diameter"
@@ -1098,7 +1367,6 @@ async def receive_text(
                         "strip_long_count"
                     ],
 
-                # تحتانی عرضی
                 transverse_diameter_mm=
                     context.user_data[
                         "strip_trans_diameter"
@@ -1109,7 +1377,6 @@ async def receive_text(
                         "strip_trans_spacing"
                     ],
 
-                # فوقانی طولی
                 top_longitudinal_diameter_mm=
                     context.user_data[
                         "strip_top_long_diameter"
@@ -1120,7 +1387,6 @@ async def receive_text(
                         "strip_top_long_count"
                     ],
 
-                # فوقانی عرضی
                 top_transverse_diameter_mm=
                     context.user_data[
                         "strip_top_trans_diameter"
@@ -1208,10 +1474,6 @@ async def receive_text(
 
         return
 
-    # =====================================================
-    # Raft bottom X
-    # =====================================================
-
     if step == "raft_thickness":
 
         context.user_data["raft_thickness"] = value
@@ -1228,8 +1490,13 @@ async def receive_text(
 
     if step == "raft_bottom_x_diameter":
 
-        context.user_data["raft_bottom_x_diameter"] = int(value)
-        context.user_data["step"] = "raft_bottom_x_spacing"
+        context.user_data[
+            "raft_bottom_x_diameter"
+        ] = int(value)
+
+        context.user_data[
+            "step"
+        ] = "raft_bottom_x_spacing"
 
         await update.message.reply_text(
             "📏 فاصله میلگرد X پایین را وارد کنید (mm):"
@@ -1240,14 +1507,15 @@ async def receive_text(
 
         return
 
-    # =====================================================
-    # Raft bottom Y
-    # =====================================================
-
     if step == "raft_bottom_x_spacing":
 
-        context.user_data["raft_bottom_x_spacing"] = int(value)
-        context.user_data["step"] = "raft_bottom_y_diameter"
+        context.user_data[
+            "raft_bottom_x_spacing"
+        ] = int(value)
+
+        context.user_data[
+            "step"
+        ] = "raft_bottom_y_diameter"
 
         await update.message.reply_text(
             "🔩 قطر میلگرد Y پایین را وارد کنید (mm):"
@@ -1260,8 +1528,13 @@ async def receive_text(
 
     if step == "raft_bottom_y_diameter":
 
-        context.user_data["raft_bottom_y_diameter"] = int(value)
-        context.user_data["step"] = "raft_bottom_y_spacing"
+        context.user_data[
+            "raft_bottom_y_diameter"
+        ] = int(value)
+
+        context.user_data[
+            "step"
+        ] = "raft_bottom_y_spacing"
 
         await update.message.reply_text(
             "📏 فاصله میلگرد Y پایین را وارد کنید (mm):"
@@ -1272,14 +1545,15 @@ async def receive_text(
 
         return
 
-    # =====================================================
-    # Raft top X
-    # =====================================================
-
     if step == "raft_bottom_y_spacing":
 
-        context.user_data["raft_bottom_y_spacing"] = int(value)
-        context.user_data["step"] = "raft_top_x_diameter"
+        context.user_data[
+            "raft_bottom_y_spacing"
+        ] = int(value)
+
+        context.user_data[
+            "step"
+        ] = "raft_top_x_diameter"
 
         await update.message.reply_text(
             "🔩 قطر میلگرد X بالا را وارد کنید (mm):"
@@ -1292,8 +1566,13 @@ async def receive_text(
 
     if step == "raft_top_x_diameter":
 
-        context.user_data["raft_top_x_diameter"] = int(value)
-        context.user_data["step"] = "raft_top_x_spacing"
+        context.user_data[
+            "raft_top_x_diameter"
+        ] = int(value)
+
+        context.user_data[
+            "step"
+        ] = "raft_top_x_spacing"
 
         await update.message.reply_text(
             "📏 فاصله میلگرد X بالا را وارد کنید (mm):"
@@ -1304,14 +1583,15 @@ async def receive_text(
 
         return
 
-    # =====================================================
-    # Raft top Y
-    # =====================================================
-
     if step == "raft_top_x_spacing":
 
-        context.user_data["raft_top_x_spacing"] = int(value)
-        context.user_data["step"] = "raft_top_y_diameter"
+        context.user_data[
+            "raft_top_x_spacing"
+        ] = int(value)
+
+        context.user_data[
+            "step"
+        ] = "raft_top_y_diameter"
 
         await update.message.reply_text(
             "🔩 قطر میلگرد Y بالا را وارد کنید (mm):"
@@ -1324,8 +1604,13 @@ async def receive_text(
 
     if step == "raft_top_y_diameter":
 
-        context.user_data["raft_top_y_diameter"] = int(value)
-        context.user_data["step"] = "raft_top_y_spacing"
+        context.user_data[
+            "raft_top_y_diameter"
+        ] = int(value)
+
+        context.user_data[
+            "step"
+        ] = "raft_top_y_spacing"
 
         await update.message.reply_text(
             "📏 فاصله میلگرد Y بالا را وارد کنید (mm):"
@@ -1337,32 +1622,38 @@ async def receive_text(
         return
 
     # =====================================================
-    # Final raft calculation
+    # Final Raft Calculation
     # =====================================================
 
     if step == "raft_top_y_spacing":
 
-        context.user_data["raft_top_y_spacing"] = int(value)
+        context.user_data[
+            "raft_top_y_spacing"
+        ] = int(value)
 
         try:
 
             result = raft_foundation(
 
                 length_m=
-                    context.user_data["raft_length"],
+                    context.user_data[
+                        "raft_length"
+                    ],
 
                 width_m=
-                    context.user_data["raft_width"],
+                    context.user_data[
+                        "raft_width"
+                    ],
 
                 thickness_m=
-                    context.user_data["raft_thickness"],
+                    context.user_data[
+                        "raft_thickness"
+                    ],
 
-                # بتن مگر حذف شده
                 lean_length_m=0,
                 lean_width_m=0,
                 lean_thickness_m=0,
 
-                # تحتانی X
                 bottom_x_diameter_mm=
                     context.user_data[
                         "raft_bottom_x_diameter"
@@ -1373,7 +1664,6 @@ async def receive_text(
                         "raft_bottom_x_spacing"
                     ],
 
-                # تحتانی Y
                 bottom_y_diameter_mm=
                     context.user_data[
                         "raft_bottom_y_diameter"
@@ -1384,7 +1674,6 @@ async def receive_text(
                         "raft_bottom_y_spacing"
                     ],
 
-                # فوقانی X
                 top_x_diameter_mm=
                     context.user_data[
                         "raft_top_x_diameter"
@@ -1395,7 +1684,6 @@ async def receive_text(
                         "raft_top_x_spacing"
                     ],
 
-                # فوقانی Y
                 top_y_diameter_mm=
                     context.user_data[
                         "raft_top_y_diameter"
@@ -1518,7 +1806,9 @@ async def button_handler(
 
 def main():
 
-    token = os.environ.get("BOT_TOKEN")
+    token = os.environ.get(
+        "BOT_TOKEN"
+    )
 
     if not token:
 
