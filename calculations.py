@@ -1,13 +1,11 @@
-# calculations.py
 # -*- coding: utf-8 -*-
 
-from math import ceil
-from collections import defaultdict
+import math
 
 
-# ============================================================
-# وزن واحد میلگرد (kg/m)
-# ============================================================
+# =========================================================
+# وزن واحد میلگرد - kg/m
+# =========================================================
 
 REBAR_WEIGHT = {
     6: 0.222,
@@ -25,183 +23,372 @@ REBAR_WEIGHT = {
 }
 
 
-def rebar_weight(diameter_mm, length_m):
-    """محاسبه وزن میلگرد بر اساس قطر و طول"""
-    diameter_mm = int(diameter_mm)
-    length_m = float(length_m)
-
-    if diameter_mm not in REBAR_WEIGHT:
-        raise ValueError(f"قطر میلگرد {diameter_mm} در جدول وجود ندارد.")
-
-    return REBAR_WEIGHT[diameter_mm] * length_m
-
-
-def bars_12m(total_length_m):
-    """تعداد شاخه 12 متری مورد نیاز"""
-    if total_length_m <= 0:
-        return 0
-
-    return ceil(total_length_m / 12)
-
-
-# ============================================================
+# =========================================================
 # ابزارهای عمومی
-# ============================================================
+# =========================================================
 
-def number_of_bars_in_direction(length_m, spacing_mm, cover_mm=50):
-    """
-    تعداد میلگرد در یک جهت
-    """
-    length_m = float(length_m)
-    spacing_mm = float(spacing_mm)
-    cover_mm = float(cover_mm)
+def rebar_weight(diameter_mm, length_m):
+    diameter_mm = int(diameter_mm)
 
-    usable_mm = max(length_m * 1000 - 2 * cover_mm, 0)
+    unit_weight = REBAR_WEIGHT.get(
+        diameter_mm,
+        diameter_mm * diameter_mm / 162.0
+    )
 
-    if spacing_mm <= 0:
-        raise ValueError("فاصله میلگرد باید بیشتر از صفر باشد.")
-
-    return max(2, ceil(usable_mm / spacing_mm) + 1)
+    return float(length_m) * unit_weight
 
 
 def usable_length(length_m, cover_mm=50):
     """
-    طول مفید داخل عضو با کسر کاور دو طرف
+    طول مفید میلگرد با کسر کاور از دو طرف
     """
-    return max(float(length_m) - 2 * float(cover_mm) / 1000, 0)
+
+    result = (
+        float(length_m)
+        - 2 * float(cover_mm) / 1000
+    )
+
+    return max(result, 0.0)
 
 
-def bar_length_with_lap(length_m, lap_percent=0):
+def number_of_bars_in_direction(
+    length_m,
+    spacing_mm,
+    cover_mm=50
+):
     """
-    افزایش طول به علت وصله پوششی
+    تعداد میلگرد در یک جهت
+
+    مثال:
+    طول = 10m
+    فاصله = 20cm
     """
-    return float(length_m) * (1 + float(lap_percent) / 100)
+
+    spacing_m = float(spacing_mm) / 1000
+
+    if spacing_m <= 0:
+        raise ValueError(
+            "فاصله میلگرد باید بزرگ‌تر از صفر باشد."
+        )
+
+    usable = usable_length(
+        length_m,
+        cover_mm
+    )
+
+    return (
+        math.floor(
+            usable / spacing_m + 1e-9
+        )
+        + 1
+    )
 
 
-# ============================================================
-# بهینه‌سازی برش شاخه‌های 12 متری
-# ============================================================
+def bar_length_with_lap(
+    length_m,
+    lap_percent=0
+):
+    return (
+        float(length_m)
+        * (1 + float(lap_percent) / 100)
+    )
+
+
+# =========================================================
+# برش شاخه 12 متری
+# =========================================================
 
 def optimize_12m_bars(cuts):
-    """
-    cuts:
-        لیستی از طول قطعات بر حسب متر
 
-    خروجی:
-        لیست شاخه‌های 12 متری و قطعات قرار گرفته داخل هر شاخه
-    """
+    pieces = sorted(
+        [
+            float(x)
+            for x in cuts
+            if float(x) > 0
+        ],
+        reverse=True
+    )
 
-    if not cuts:
-        return []
+    for piece in pieces:
 
-    cuts = [float(x) for x in cuts if float(x) > 0]
-    cuts.sort(reverse=True)
+        if piece > 12.000001:
+            raise ValueError(
+                "طول یک قطعه از شاخه ۱۲ متری بیشتر است."
+            )
 
     bars = []
 
-    for cut in cuts:
+    for piece in pieces:
+
         placed = False
 
         for bar in bars:
-            if bar["remaining"] + 1e-9 >= cut:
-                bar["cuts"].append(cut)
-                bar["remaining"] -= cut
+
+            if bar["used"] + piece <= 12.000001:
+
+                bar["pieces"].append(piece)
+
+                bar["used"] += piece
+
+                bar["waste"] = (
+                    12 - bar["used"]
+                )
+
                 placed = True
+
                 break
 
         if not placed:
-            bars.append({
-                "stock_length": 12.0,
-                "cuts": [cut],
-                "remaining": 12.0 - cut,
-            })
 
-    return bars
+            bars.append(
+                {
+                    "pieces": [piece],
+                    "used": piece,
+                    "waste": 12 - piece,
+                }
+            )
 
+    return {
+        "stock_bars": len(bars),
+        "waste_m": sum(
+            b["waste"]
+            for b in bars
+        ),
+        "plans": bars,
+    }
+
+
+# =========================================================
+# جزئیات میلگرد
+# =========================================================
 
 def make_rebar_detail(
     diameter_mm,
-    pieces,
-    piece_length_m,
-    lap_percent=0,
-    description=""
+    piece_lengths,
+    description="",
+    lap_percent=0
 ):
-    """
-    ساخت جزئیات میلگرد
-    """
 
-    diameter_mm = int(diameter_mm)
-    pieces = int(pieces)
-    piece_length_m = float(piece_length_m)
+    pieces = [
+        bar_length_with_lap(
+            x,
+            lap_percent
+        )
+        for x in piece_lengths
+        if float(x) > 0
+    ]
 
-    final_length = bar_length_with_lap(
-        piece_length_m,
-        lap_percent
+    optimization = optimize_12m_bars(
+        pieces
     )
 
-    total_length = pieces * final_length
-    weight = rebar_weight(
-        diameter_mm,
-        total_length
-    )
+    total_length = sum(pieces)
 
     return {
-        "diameter": diameter_mm,
-        "pieces": pieces,
-        "piece_length": round(final_length, 3),
-        "total_length": round(total_length, 3),
-        "weight": round(weight, 2),
-        "bars_12m": bars_12m(total_length),
-        "description": description,
+
+        "diameter_mm":
+            int(diameter_mm),
+
+        "length_m":
+            total_length,
+
+        "weight_kg":
+            rebar_weight(
+                diameter_mm,
+                total_length
+            ),
+
+        "bars_12m":
+            optimization["stock_bars"],
+
+        "piece_count":
+            len(pieces),
+
+        "piece_lengths_m":
+            pieces,
+
+        "waste_m":
+            optimization["waste_m"],
+
+        "cut_plan":
+            optimization["plans"],
+
+        "description":
+            description,
     }
 
 
-def add_rebar_detail(details, detail):
-    """افزودن یک آیتم میلگرد"""
-    details.append(detail)
-    return details
+def add_rebar_detail(
+    details,
+    diameter_mm,
+    piece_lengths,
+    description="",
+    lap_percent=0
+):
+
+    if piece_lengths:
+
+        details.append(
+            make_rebar_detail(
+                diameter_mm,
+                piece_lengths,
+                description,
+                lap_percent
+            )
+        )
 
 
 def finalize_rebar_details(details):
-    """
-    جمع‌بندی میلگردها
-    """
 
-    total_weight = sum(
-        item.get("weight", 0)
-        for item in details
-    )
+    grouped = {}
 
-    total_length = sum(
-        item.get("total_length", 0)
-        for item in details
+    descriptions = {}
+
+    for item in details:
+
+        diameter = int(
+            item["diameter_mm"]
+        )
+
+        grouped.setdefault(
+            diameter,
+            []
+        ).extend(
+            item["piece_lengths_m"]
+        )
+
+        if item.get("description"):
+
+            descriptions.setdefault(
+                diameter,
+                []
+            ).append(
+                item["description"]
+            )
+
+    result = []
+
+    for diameter in sorted(
+        grouped.keys()
+    ):
+
+        pieces = grouped[diameter]
+
+        optimization = optimize_12m_bars(
+            pieces
+        )
+
+        total_length = sum(pieces)
+
+        result.append(
+            {
+                "diameter_mm":
+                    diameter,
+
+                "length_m":
+                    total_length,
+
+                "weight_kg":
+                    rebar_weight(
+                        diameter,
+                        total_length
+                    ),
+
+                "bars_12m":
+                    optimization["stock_bars"],
+
+                "piece_count":
+                    len(pieces),
+
+                "piece_lengths_m":
+                    pieces,
+
+                "waste_m":
+                    optimization["waste_m"],
+
+                "cut_plan":
+                    optimization["plans"],
+
+                "description":
+                    " + ".join(
+                        dict.fromkeys(
+                            descriptions.get(
+                                diameter,
+                                []
+                            )
+                        )
+                    ),
+            }
+        )
+
+    return result
+
+
+# =========================================================
+# نتیجه عمومی فونداسیون
+# =========================================================
+
+def _foundation_result(
+    lean_concrete,
+    structural_concrete,
+    details,
+    **extra
+):
+
+    rebar_details = finalize_rebar_details(
+        details
     )
 
     return {
-        "details": details,
-        "total_weight": round(total_weight, 2),
-        "total_length": round(total_length, 2),
+
+        "lean_concrete_m3":
+            lean_concrete,
+
+        "structural_concrete_m3":
+            structural_concrete,
+
+        "total_concrete_m3":
+            lean_concrete
+            + structural_concrete,
+
+        "total_rebar_kg":
+            sum(
+                x["weight_kg"]
+                for x in rebar_details
+            ),
+
+        "rebar_details":
+            rebar_details,
+
+        **extra,
     }
 
 
-# ============================================================
-# پی منفرد
-# ============================================================
+# =========================================================
+# 1 - پی منفرد
+# =========================================================
 
 def isolated_footing(
+
     count,
+
     length_m,
     width_m,
     thickness_m,
+
     lean_concrete_length_m,
     lean_concrete_width_m,
     lean_concrete_thickness_m,
+
     bottom_diameter_mm,
     bottom_spacing_mm,
+
     top_diameter_mm=None,
     top_spacing_mm=None,
+
     cover_mm=50,
     lap_percent=0,
+
     pedestal_length_m=0,
     pedestal_width_m=0,
     pedestal_height_m=0,
@@ -209,13 +396,10 @@ def isolated_footing(
 
     count = int(count)
 
-    # بتن مگر
-    lean_concrete = (
-        count
-        * lean_concrete_length_m
-        * lean_concrete_width_m
-        * lean_concrete_thickness_m
-    )
+    if count <= 0:
+        raise ValueError(
+            "تعداد پی باید بزرگ‌تر از صفر باشد."
+        )
 
     # بتن پی
     footing_concrete = (
@@ -225,7 +409,15 @@ def isolated_footing(
         * thickness_m
     )
 
-    # بتن ستونک / پدستال
+    # بتن مگر
+    lean_concrete = (
+        count
+        * lean_concrete_length_m
+        * lean_concrete_width_m
+        * lean_concrete_thickness_m
+    )
+
+    # بتن پدستال
     pedestal_concrete = (
         count
         * pedestal_length_m
@@ -233,149 +425,206 @@ def isolated_footing(
         * pedestal_height_m
     )
 
-    structural_concrete = (
-        footing_concrete +
-        pedestal_concrete
-    )
-
     details = []
 
-    # --------------------------------------------------------
-    # میلگرد پایین - جهت X
-    # --------------------------------------------------------
+    usable_L = usable_length(
+        length_m,
+        cover_mm
+    )
 
-    bars_x = number_of_bars_in_direction(
+    usable_W = usable_length(
+        width_m,
+        cover_mm
+    )
+
+    # -----------------------------------------
+    # شبکه پایین X
+    # -----------------------------------------
+
+    number_X = number_of_bars_in_direction(
         width_m,
         bottom_spacing_mm,
         cover_mm
     )
 
-    bars_y = number_of_bars_in_direction(
+    add_rebar_detail(
+
+        details,
+
+        bottom_diameter_mm,
+
+        [usable_L]
+        * (
+            number_X
+            * count
+        ),
+
+        "پی منفرد - شبکه پایین X",
+
+        lap_percent
+    )
+
+    # -----------------------------------------
+    # شبکه پایین Y
+    # -----------------------------------------
+
+    number_Y = number_of_bars_in_direction(
         length_m,
         bottom_spacing_mm,
         cover_mm
     )
 
-    length_x = usable_length(
-        length_m,
-        cover_mm
-    )
-
-    length_y = usable_length(
-        width_m,
-        cover_mm
-    )
-
-    total_x = bars_x * length_x * count
-    total_y = bars_y * length_y * count
-
     add_rebar_detail(
+
         details,
-        make_rebar_detail(
-            bottom_diameter_mm,
-            bars_x * count,
-            length_x,
-            lap_percent,
-            "شبکه پایین جهت X"
-        )
+
+        bottom_diameter_mm,
+
+        [usable_W]
+        * (
+            number_Y
+            * count
+        ),
+
+        "پی منفرد - شبکه پایین Y",
+
+        lap_percent
     )
 
-    add_rebar_detail(
-        details,
-        make_rebar_detail(
-            bottom_diameter_mm,
-            bars_y * count,
-            length_y,
-            lap_percent,
-            "شبکه پایین جهت Y"
-        )
-    )
-
-    # --------------------------------------------------------
-    # میلگرد بالایی - اختیاری
-    # --------------------------------------------------------
+    # -----------------------------------------
+    # شبکه بالا X/Y
+    # -----------------------------------------
 
     if (
         top_diameter_mm
         and top_spacing_mm
     ):
 
-        top_bars_x = number_of_bars_in_direction(
+        number_X = number_of_bars_in_direction(
             width_m,
             top_spacing_mm,
             cover_mm
         )
 
-        top_bars_y = number_of_bars_in_direction(
+        number_Y = number_of_bars_in_direction(
             length_m,
             top_spacing_mm,
             cover_mm
         )
 
         add_rebar_detail(
+
             details,
-            make_rebar_detail(
-                top_diameter_mm,
-                top_bars_x * count,
-                length_x,
-                lap_percent,
-                "شبکه بالا جهت X"
-            )
+
+            top_diameter_mm,
+
+            [usable_L]
+            * (
+                number_X
+                * count
+            ),
+
+            "پی منفرد - شبکه بالا X",
+
+            lap_percent
         )
 
         add_rebar_detail(
+
             details,
-            make_rebar_detail(
-                top_diameter_mm,
-                top_bars_y * count,
-                length_y,
-                lap_percent,
-                "شبکه بالا جهت Y"
-            )
+
+            top_diameter_mm,
+
+            [usable_W]
+            * (
+                number_Y
+                * count
+            ),
+
+            "پی منفرد - شبکه بالا Y",
+
+            lap_percent
         )
 
-    summary = finalize_rebar_details(details)
+    result = _foundation_result(
 
-    return {
-        "type": "isolated_footing",
-        "count": count,
-        "lean_concrete": round(lean_concrete, 3),
-        "footing_concrete": round(footing_concrete, 3),
-        "pedestal_concrete": round(pedestal_concrete, 3),
-        "structural_concrete": round(structural_concrete, 3),
-        "total_concrete": round(
-            lean_concrete + structural_concrete,
-            3
-        ),
-        "rebar": summary,
-    }
+        lean_concrete,
+
+        footing_concrete
+        + pedestal_concrete,
+
+        details,
+
+        count=count,
+
+        footing_concrete_m3=
+            footing_concrete,
+
+        pedestal_concrete_m3=
+            pedestal_concrete,
+    )
+
+    return result
 
 
-# ============================================================
-# پی نواری
-# ============================================================
+# =========================================================
+# 2 - پی نواری
+# =========================================================
 
 def strip_footing(
+
     strip_count,
+
     strip_length_m,
     footing_width_m,
     footing_thickness_m,
+
     lean_length_m,
     lean_width_m,
     lean_thickness_m,
+
     longitudinal_diameter_mm,
     longitudinal_count,
+
     transverse_diameter_mm,
     transverse_spacing_mm,
+
     top_longitudinal_diameter_mm=None,
     top_longitudinal_count=None,
+
     top_transverse_diameter_mm=None,
     top_transverse_spacing_mm=None,
+
     cover_mm=50,
     lap_percent=0,
 ):
 
-    strip_count = int(strip_count)
+    strip_count = int(
+        strip_count
+    )
+
+    longitudinal_count = int(
+        longitudinal_count
+    )
+
+    if strip_count <= 0:
+        raise ValueError(
+            "تعداد نوار باید بزرگ‌تر از صفر باشد."
+        )
+
+    if longitudinal_count <= 0:
+        raise ValueError(
+            "تعداد میلگرد طولی باید بزرگ‌تر از صفر باشد."
+        )
+
+    if transverse_spacing_mm <= 0:
+        raise ValueError(
+            "فاصله میلگرد عرضی باید بزرگ‌تر از صفر باشد."
+        )
+
+    # -----------------------------------------
+    # بتن
+    # -----------------------------------------
 
     lean_concrete = (
         strip_count
@@ -384,7 +633,7 @@ def strip_footing(
         * lean_thickness_m
     )
 
-    footing_concrete = (
+    structural_concrete = (
         strip_count
         * strip_length_m
         * footing_width_m
@@ -393,116 +642,167 @@ def strip_footing(
 
     details = []
 
-    # میلگردهای طولی پایین
-    add_rebar_detail(
-        details,
-        make_rebar_detail(
-            longitudinal_diameter_mm,
-            longitudinal_count * strip_count,
-            strip_length_m,
-            lap_percent,
-            "میلگرد طولی پایین"
-        )
-    )
-
-    # میلگردهای عرضی پایین
-    transverse_count = number_of_bars_in_direction(
+    usable_L = usable_length(
         strip_length_m,
-        transverse_spacing_mm,
         cover_mm
     )
 
-    transverse_length = usable_length(
+    usable_W = usable_length(
         footing_width_m,
         cover_mm
     )
 
+    # -----------------------------------------
+    # میلگرد طولی پایین
+    # -----------------------------------------
+
     add_rebar_detail(
+
         details,
-        make_rebar_detail(
-            transverse_diameter_mm,
-            transverse_count * strip_count,
-            transverse_length,
-            lap_percent,
-            "میلگرد عرضی پایین"
+
+        longitudinal_diameter_mm,
+
+        [usable_L]
+        * (
+            longitudinal_count
+            * strip_count
+        ),
+
+        "پی نواری - طولی پایین",
+
+        lap_percent
+    )
+
+    # -----------------------------------------
+    # میلگرد عرضی پایین
+    # -----------------------------------------
+
+    transverse_count = (
+        number_of_bars_in_direction(
+            strip_length_m,
+            transverse_spacing_mm,
+            cover_mm
         )
     )
 
-    # میلگرد طولی بالا
+    add_rebar_detail(
+
+        details,
+
+        transverse_diameter_mm,
+
+        [usable_W]
+        * (
+            transverse_count
+            * strip_count
+        ),
+
+        "پی نواری - عرضی پایین",
+
+        lap_percent
+    )
+
+    # -----------------------------------------
+    # طولی بالا
+    # -----------------------------------------
+
     if (
         top_longitudinal_diameter_mm
         and top_longitudinal_count
     ):
 
         add_rebar_detail(
+
             details,
-            make_rebar_detail(
-                top_longitudinal_diameter_mm,
-                int(top_longitudinal_count) * strip_count,
-                strip_length_m,
-                lap_percent,
-                "میلگرد طولی بالا"
-            )
+
+            top_longitudinal_diameter_mm,
+
+            [usable_L]
+            * (
+                int(top_longitudinal_count)
+                * strip_count
+            ),
+
+            "پی نواری - طولی بالا",
+
+            lap_percent
         )
 
-    # میلگرد عرضی بالا
+    # -----------------------------------------
+    # عرضی بالا
+    # -----------------------------------------
+
     if (
         top_transverse_diameter_mm
         and top_transverse_spacing_mm
     ):
 
-        top_transverse_count = number_of_bars_in_direction(
-            strip_length_m,
-            top_transverse_spacing_mm,
-            cover_mm
-        )
-
-        add_rebar_detail(
-            details,
-            make_rebar_detail(
-                top_transverse_diameter_mm,
-                top_transverse_count * strip_count,
-                transverse_length,
-                lap_percent,
-                "میلگرد عرضی بالا"
+        top_transverse_count = (
+            number_of_bars_in_direction(
+                strip_length_m,
+                top_transverse_spacing_mm,
+                cover_mm
             )
         )
 
-    summary = finalize_rebar_details(details)
+        add_rebar_detail(
 
-    return {
-        "type": "strip_footing",
-        "count": strip_count,
-        "lean_concrete": round(lean_concrete, 3),
-        "footing_concrete": round(footing_concrete, 3),
-        "structural_concrete": round(footing_concrete, 3),
-        "total_concrete": round(
-            lean_concrete + footing_concrete,
-            3
-        ),
-        "rebar": summary,
-    }
+            details,
+
+            top_transverse_diameter_mm,
+
+            [usable_W]
+            * (
+                top_transverse_count
+                * strip_count
+            ),
+
+            "پی نواری - عرضی بالا",
+
+            lap_percent
+        )
+
+    return _foundation_result(
+
+        lean_concrete,
+
+        structural_concrete,
+
+        details,
+
+        count=strip_count,
+
+        footing_concrete_m3=
+            structural_concrete,
+    )
 
 
-# ============================================================
-# پی گسترده / رادیه
-# ============================================================
+# =========================================================
+# 3 - پی گسترده / رادیه
+# =========================================================
 
 def raft_foundation(
+
     length_m,
     width_m,
     thickness_m,
+
     lean_length_m,
     lean_width_m,
     lean_thickness_m,
+
     bottom_x_diameter_mm,
     bottom_x_spacing_mm,
+
     bottom_y_diameter_mm,
     bottom_y_spacing_mm,
+
     top_x_diameter_mm=None,
     top_x_spacing_mm=None,
+
     top_y_diameter_mm=None,
     top_y_spacing_mm=None,
+
     cover_mm=50,
     lap_percent=0,
 ):
@@ -513,7 +813,7 @@ def raft_foundation(
         * lean_thickness_m
     )
 
-    raft_concrete = (
+    structural_concrete = (
         length_m
         * width_m
         * thickness_m
@@ -521,153 +821,201 @@ def raft_foundation(
 
     details = []
 
-    # پایین X
-    count_x = number_of_bars_in_direction(
+    usable_L = usable_length(
+        length_m,
+        cover_mm
+    )
+
+    usable_W = usable_length(
+        width_m,
+        cover_mm
+    )
+
+    # -----------------------------------------
+    # شبکه پایین X
+    # -----------------------------------------
+
+    number_X = number_of_bars_in_direction(
         width_m,
         bottom_x_spacing_mm,
         cover_mm
     )
 
-    length_x = usable_length(
-        length_m,
-        cover_mm
-    )
-
     add_rebar_detail(
+
         details,
-        make_rebar_detail(
-            bottom_x_diameter_mm,
-            count_x,
-            length_x,
-            lap_percent,
-            "شبکه پایین X"
-        )
+
+        bottom_x_diameter_mm,
+
+        [usable_L]
+        * number_X,
+
+        "رادیه - شبکه پایین X",
+
+        lap_percent
     )
 
-    # پایین Y
-    count_y = number_of_bars_in_direction(
+    # -----------------------------------------
+    # شبکه پایین Y
+    # -----------------------------------------
+
+    number_Y = number_of_bars_in_direction(
         length_m,
         bottom_y_spacing_mm,
         cover_mm
     )
 
-    length_y = usable_length(
-        width_m,
-        cover_mm
-    )
-
     add_rebar_detail(
+
         details,
-        make_rebar_detail(
-            bottom_y_diameter_mm,
-            count_y,
-            length_y,
-            lap_percent,
-            "شبکه پایین Y"
-        )
+
+        bottom_y_diameter_mm,
+
+        [usable_W]
+        * number_Y,
+
+        "رادیه - شبکه پایین Y",
+
+        lap_percent
     )
 
-    # بالا X
+    # -----------------------------------------
+    # شبکه بالا X
+    # -----------------------------------------
+
     if (
         top_x_diameter_mm
         and top_x_spacing_mm
     ):
 
-        count = number_of_bars_in_direction(
+        number_X = number_of_bars_in_direction(
             width_m,
             top_x_spacing_mm,
             cover_mm
         )
 
         add_rebar_detail(
+
             details,
-            make_rebar_detail(
-                top_x_diameter_mm,
-                count,
-                length_x,
-                lap_percent,
-                "شبکه بالا X"
-            )
+
+            top_x_diameter_mm,
+
+            [usable_L]
+            * number_X,
+
+            "رادیه - شبکه بالا X",
+
+            lap_percent
         )
 
-    # بالا Y
+    # -----------------------------------------
+    # شبکه بالا Y
+    # -----------------------------------------
+
     if (
         top_y_diameter_mm
         and top_y_spacing_mm
     ):
 
-        count = number_of_bars_in_direction(
+        number_Y = number_of_bars_in_direction(
             length_m,
             top_y_spacing_mm,
             cover_mm
         )
 
         add_rebar_detail(
+
             details,
-            make_rebar_detail(
-                top_y_diameter_mm,
-                count,
-                length_y,
-                lap_percent,
-                "شبکه بالا Y"
+
+            top_y_diameter_mm,
+
+            [usable_W]
+            * number_Y,
+
+            "رادیه - شبکه بالا Y",
+
+            lap_percent
+        )
+
+    return _foundation_result(
+
+        lean_concrete,
+
+        structural_concrete,
+
+        details,
+
+        raft_concrete_m3=
+            structural_concrete
+    )
+
+
+# =========================================================
+# جمع چند فونداسیون
+# =========================================================
+
+def total_foundation_result(
+    results
+):
+
+    all_details = []
+
+    for result in results:
+
+        all_details.extend(
+            result.get(
+                "rebar_details",
+                []
             )
         )
 
-    summary = finalize_rebar_details(details)
-
-    return {
-        "type": "raft_foundation",
-        "lean_concrete": round(lean_concrete, 3),
-        "raft_concrete": round(raft_concrete, 3),
-        "structural_concrete": round(raft_concrete, 3),
-        "total_concrete": round(
-            lean_concrete + raft_concrete,
-            3
-        ),
-        "rebar": summary,
-    }
-
-
-# ============================================================
-# جمع‌بندی فونداسیون
-# ============================================================
-
-def total_foundation_result(results):
-    """
-    جمع نتایج چند نوع فونداسیون
-    """
-
-    total_concrete = sum(
-        result.get("total_concrete", 0)
-        for result in results
-    )
-
-    total_rebar = sum(
-        result.get("rebar", {}).get("total_weight", 0)
-        for result in results
+    final_details = finalize_rebar_details(
+        all_details
     )
 
     return {
-        "total_concrete": round(total_concrete, 3),
-        "total_rebar": round(total_rebar, 2),
-        "results": results,
+
+        "total_concrete_m3":
+            sum(
+                x.get(
+                    "total_concrete_m3",
+                    0
+                )
+                for x in results
+            ),
+
+        "total_rebar_kg":
+            sum(
+                x.get(
+                    "total_rebar_kg",
+                    0
+                )
+                for x in results
+            ),
+
+        "rebar_details":
+            final_details,
     }
 
 
-# ============================================================
+# =========================================================
 # ستون مستطیلی
-# ============================================================
+# =========================================================
 
 def column_rectangular(
+
     count,
     width_m,
     depth_m,
     height_m,
+
     main_diameter_mm,
     main_count,
+
     stirrup_diameter_mm,
     stirrup_spacing_mm,
-    cover_mm=40,
+
+    cover_mm=40
 ):
 
     count = int(count)
@@ -679,167 +1027,226 @@ def column_rectangular(
         * height_m
     )
 
-    # میلگردهای طولی
-    main_length = max(
-        height_m - 2 * cover_mm / 1000,
-        0
-    )
-
     details = []
 
-    add_rebar_detail(
-        details,
-        make_rebar_detail(
-            main_diameter_mm,
-            main_count * count,
-            main_length,
-            0,
-            "میلگرد طولی ستون"
-        )
+    usable_H = usable_length(
+        height_m,
+        cover_mm
     )
 
-    # خاموت
+    add_rebar_detail(
+
+        details,
+
+        main_diameter_mm,
+
+        [usable_H]
+        * (
+            int(main_count)
+            * count
+        ),
+
+        "ستون - میلگرد طولی"
+    )
+
     stirrup_count = (
-        ceil(
-            max(
-                height_m * 1000 - 2 * cover_mm,
-                0
-            )
-            / stirrup_spacing_mm
+        number_of_bars_in_direction(
+            height_m,
+            stirrup_spacing_mm,
+            cover_mm
         )
-        + 1
     )
 
     stirrup_length = (
-        2 * (
-            max(width_m - 2 * cover_mm / 1000, 0)
+        2
+        * (
+            usable_length(
+                width_m,
+                cover_mm
+            )
             +
-            max(depth_m - 2 * cover_mm / 1000, 0)
+            usable_length(
+                depth_m,
+                cover_mm
+            )
         )
-        + 0.20
     )
 
     add_rebar_detail(
+
         details,
-        make_rebar_detail(
-            stirrup_diameter_mm,
-            stirrup_count * count,
-            stirrup_length,
-            0,
-            "خاموت ستون"
-        )
+
+        stirrup_diameter_mm,
+
+        [stirrup_length]
+        * (
+            stirrup_count
+            * count
+        ),
+
+        "ستون - خاموت"
     )
 
-    summary = finalize_rebar_details(details)
-
     return {
-        "type": "column_rectangular",
-        "count": count,
-        "concrete": round(concrete, 3),
-        "rebar": summary,
+
+        "type":
+            "column_rectangular",
+
+        "count":
+            count,
+
+        "concrete_m3":
+            concrete,
+
+        "total_concrete_m3":
+            concrete,
+
+        "rebar_details":
+            finalize_rebar_details(
+                details
+            ),
+
+        "total_rebar_kg":
+            sum(
+                x["weight_kg"]
+                for x in finalize_rebar_details(
+                    details
+                )
+            )
     }
 
 
-# ============================================================
+# =========================================================
 # ستون گرد
-# ============================================================
+# =========================================================
 
 def column_round(
+
     count,
     diameter_m,
     height_m,
+
     main_diameter_mm,
     main_count,
+
     stirrup_diameter_mm,
     stirrup_spacing_mm,
-    cover_mm=40,
+
+    cover_mm=40
 ):
 
     count = int(count)
 
-    radius = diameter_m / 2
-
     concrete = (
         count
-        * 3.141592653589793
-        * radius ** 2
+        * math.pi
+        * diameter_m ** 2
+        / 4
         * height_m
     )
 
     details = []
 
-    main_length = max(
-        height_m - 2 * cover_mm / 1000,
-        0
+    usable_H = usable_length(
+        height_m,
+        cover_mm
     )
 
     add_rebar_detail(
+
         details,
-        make_rebar_detail(
-            main_diameter_mm,
-            main_count * count,
-            main_length,
-            0,
-            "میلگرد طولی ستون گرد"
-        )
+
+        main_diameter_mm,
+
+        [usable_H]
+        * (
+            int(main_count)
+            * count
+        ),
+
+        "ستون گرد - طولی"
     )
 
-    stirrup_count = (
-        ceil(
-            max(
-                height_m * 1000 - 2 * cover_mm,
-                0
-            )
-            / stirrup_spacing_mm
-        )
-        + 1
-    )
-
-    stirrup_length = (
-        3.141592653589793
+    ring_length = (
+        math.pi
         * max(
-            diameter_m - 2 * cover_mm / 1000,
+            diameter_m
+            - 2 * cover_mm / 1000,
             0
         )
-        + 0.20
     )
 
-    add_rebar_detail(
-        details,
-        make_rebar_detail(
-            stirrup_diameter_mm,
-            stirrup_count * count,
-            stirrup_length,
-            0,
-            "خاموت / دورپیچ ستون گرد"
+    ring_count = (
+        number_of_bars_in_direction(
+            height_m,
+            stirrup_spacing_mm,
+            cover_mm
         )
     )
 
-    summary = finalize_rebar_details(details)
+    add_rebar_detail(
+
+        details,
+
+        stirrup_diameter_mm,
+
+        [ring_length]
+        * (
+            ring_count
+            * count
+        ),
+
+        "ستون گرد - خاموت حلقوی"
+    )
+
+    final = finalize_rebar_details(
+        details
+    )
 
     return {
-        "type": "column_round",
-        "count": count,
-        "concrete": round(concrete, 3),
-        "rebar": summary,
+
+        "type":
+            "column_round",
+
+        "count":
+            count,
+
+        "concrete_m3":
+            concrete,
+
+        "total_concrete_m3":
+            concrete,
+
+        "rebar_details":
+            final,
+
+        "total_rebar_kg":
+            sum(
+                x["weight_kg"]
+                for x in final
+            )
     }
 
 
-# ============================================================
+# =========================================================
 # تیر
-# ============================================================
+# =========================================================
 
 def beam(
+
     count,
     length_m,
     width_m,
     height_m,
+
     main_diameter_mm,
     main_top_count,
     main_bottom_count,
+
     stirrup_diameter_mm,
     stirrup_spacing_mm,
-    cover_mm=40,
+
+    cover_mm=40
 ):
 
     count = int(count)
@@ -853,345 +1260,441 @@ def beam(
 
     details = []
 
-    main_length = max(
-        length_m - 2 * cover_mm / 1000,
-        0
+    usable_L = usable_length(
+        length_m,
+        cover_mm
     )
 
     add_rebar_detail(
+
         details,
-        make_rebar_detail(
-            main_diameter_mm,
-            (
-                main_top_count +
-                main_bottom_count
-            ) * count,
-            main_length,
-            0,
-            "میلگرد طولی تیر"
-        )
+
+        main_diameter_mm,
+
+        [usable_L]
+        * (
+            int(main_bottom_count)
+            * count
+        ),
+
+        "تیر - طولی پایین"
+    )
+
+    add_rebar_detail(
+
+        details,
+
+        main_diameter_mm,
+
+        [usable_L]
+        * (
+            int(main_top_count)
+            * count
+        ),
+
+        "تیر - طولی بالا"
     )
 
     stirrup_count = (
-        ceil(
-            max(
-                length_m * 1000 - 2 * cover_mm,
-                0
-            )
-            / stirrup_spacing_mm
+        number_of_bars_in_direction(
+            length_m,
+            stirrup_spacing_mm,
+            cover_mm
         )
-        + 1
     )
 
     stirrup_length = (
-        2 * (
-            max(width_m - 2 * cover_mm / 1000, 0)
+        2
+        * (
+            usable_length(
+                width_m,
+                cover_mm
+            )
             +
-            max(height_m - 2 * cover_mm / 1000, 0)
+            usable_length(
+                height_m,
+                cover_mm
+            )
         )
-        + 0.20
     )
 
     add_rebar_detail(
+
         details,
-        make_rebar_detail(
-            stirrup_diameter_mm,
-            stirrup_count * count,
-            stirrup_length,
-            0,
-            "خاموت تیر"
-        )
+
+        stirrup_diameter_mm,
+
+        [stirrup_length]
+        * (
+            stirrup_count
+            * count
+        ),
+
+        "تیر - خاموت"
     )
 
-    summary = finalize_rebar_details(details)
+    final = finalize_rebar_details(
+        details
+    )
 
     return {
-        "type": "beam",
-        "count": count,
-        "concrete": round(concrete, 3),
-        "rebar": summary,
+
+        "type":
+            "beam",
+
+        "count":
+            count,
+
+        "concrete_m3":
+            concrete,
+
+        "total_concrete_m3":
+            concrete,
+
+        "rebar_details":
+            final,
+
+        "total_rebar_kg":
+            sum(
+                x["weight_kg"]
+                for x in final
+            )
     }
 
 
-# ============================================================
+# =========================================================
 # شناژ / کلاف
-# ============================================================
+# =========================================================
 
 def tie_beam(
+
     count,
     length_m,
     width_m,
     height_m,
+
     main_diameter_mm,
     main_count,
+
     stirrup_diameter_mm,
     stirrup_spacing_mm,
-    cover_mm=40,
+
+    cover_mm=40
 ):
 
     return beam(
-        count=count,
-        length_m=length_m,
-        width_m=width_m,
-        height_m=height_m,
-        main_diameter_mm=main_diameter_mm,
-        main_top_count=main_count,
-        main_bottom_count=main_count,
-        stirrup_diameter_mm=stirrup_diameter_mm,
-        stirrup_spacing_mm=stirrup_spacing_mm,
-        cover_mm=cover_mm,
+
+        count,
+
+        length_m,
+        width_m,
+        height_m,
+
+        main_diameter_mm,
+
+        main_count,
+        main_count,
+
+        stirrup_diameter_mm,
+        stirrup_spacing_mm,
+
+        cover_mm
     )
 
 
-# ============================================================
-# دیوار بتنی
-# ============================================================
+# =========================================================
+# دیوار
+# =========================================================
 
 def wall_concrete(
-    count,
+
     length_m,
-    thickness_m,
     height_m,
+    thickness_m,
+
     vertical_diameter_mm,
     vertical_spacing_mm,
+
     horizontal_diameter_mm,
     horizontal_spacing_mm,
-    cover_mm=40,
+
+    cover_mm=40
 ):
 
-    count = int(count)
-
     concrete = (
-        count
-        * length_m
-        * thickness_m
+        length_m
         * height_m
+        * thickness_m
     )
 
     details = []
 
-    # قائم
-    vertical_count = number_of_bars_in_direction(
-        length_m,
-        vertical_spacing_mm,
-        cover_mm
-    )
-
-    vertical_length = max(
-        height_m - 2 * cover_mm / 1000,
-        0
-    )
-
-    add_rebar_detail(
-        details,
-        make_rebar_detail(
-            vertical_diameter_mm,
-            vertical_count * count,
-            vertical_length,
-            0,
-            "میلگرد قائم دیوار"
-        )
-    )
-
-    # افقی
-    horizontal_count = number_of_bars_in_direction(
+    usable_H = usable_length(
         height_m,
-        horizontal_spacing_mm,
         cover_mm
     )
 
-    horizontal_length = max(
-        length_m - 2 * cover_mm / 1000,
-        0
+    usable_L = usable_length(
+        length_m,
+        cover_mm
     )
 
-    add_rebar_detail(
-        details,
-        make_rebar_detail(
-            horizontal_diameter_mm,
-            horizontal_count * count,
-            horizontal_length,
-            0,
-            "میلگرد افقی دیوار"
+    vertical_count = (
+        number_of_bars_in_direction(
+            length_m,
+            vertical_spacing_mm,
+            cover_mm
         )
     )
 
-    summary = finalize_rebar_details(details)
+    horizontal_count = (
+        number_of_bars_in_direction(
+            height_m,
+            horizontal_spacing_mm,
+            cover_mm
+        )
+    )
+
+    add_rebar_detail(
+
+        details,
+
+        vertical_diameter_mm,
+
+        [usable_H]
+        * vertical_count,
+
+        "دیوار - قائم"
+    )
+
+    add_rebar_detail(
+
+        details,
+
+        horizontal_diameter_mm,
+
+        [usable_L]
+        * horizontal_count,
+
+        "دیوار - افقی"
+    )
+
+    final = finalize_rebar_details(
+        details
+    )
 
     return {
-        "type": "wall",
-        "count": count,
-        "concrete": round(concrete, 3),
-        "rebar": summary,
+
+        "type":
+            "wall",
+
+        "concrete_m3":
+            concrete,
+
+        "total_concrete_m3":
+            concrete,
+
+        "rebar_details":
+            final,
+
+        "total_rebar_kg":
+            sum(
+                x["weight_kg"]
+                for x in final
+            )
     }
 
 
-# ============================================================
-# راه‌پله
-# ============================================================
+# =========================================================
+# راه پله
+# =========================================================
 
 def stair_slab(
-    count,
+
     length_m,
     width_m,
     thickness_m,
+
     main_diameter_mm,
     main_spacing_mm,
+
     distribution_diameter_mm,
     distribution_spacing_mm,
-    cover_mm=30,
+
+    steps=0,
+    step_riser=0,
+    step_tread=0
 ):
 
-    count = int(count)
-
     concrete = (
-        count
-        * length_m
+        length_m
         * width_m
         * thickness_m
     )
 
     details = []
 
-    main_count = number_of_bars_in_direction(
-        width_m,
-        main_spacing_mm,
-        cover_mm
-    )
-
-    main_length = max(
-        length_m - 2 * cover_mm / 1000,
-        0
-    )
-
-    add_rebar_detail(
-        details,
-        make_rebar_detail(
-            main_diameter_mm,
-            main_count * count,
-            main_length,
-            0,
-            "میلگرد اصلی راه‌پله"
-        )
-    )
-
-    distribution_count = number_of_bars_in_direction(
+    usable_L = usable_length(
         length_m,
-        distribution_spacing_mm,
-        cover_mm
+        40
     )
 
-    distribution_length = max(
-        width_m - 2 * cover_mm / 1000,
-        0
+    usable_W = usable_length(
+        width_m,
+        40
     )
 
-    add_rebar_detail(
-        details,
-        make_rebar_detail(
-            distribution_diameter_mm,
-            distribution_count * count,
-            distribution_length,
-            0,
-            "میلگرد توزیعی راه‌پله"
+    main_count = (
+        number_of_bars_in_direction(
+            width_m,
+            main_spacing_mm,
+            40
         )
     )
 
-    summary = finalize_rebar_details(details)
+    distribution_count = (
+        number_of_bars_in_direction(
+            length_m,
+            distribution_spacing_mm,
+            40
+        )
+    )
+
+    add_rebar_detail(
+
+        details,
+
+        main_diameter_mm,
+
+        [usable_L]
+        * main_count,
+
+        "راه‌پله - اصلی"
+    )
+
+    add_rebar_detail(
+
+        details,
+
+        distribution_diameter_mm,
+
+        [usable_W]
+        * distribution_count,
+
+        "راه‌پله - توزیعی"
+    )
+
+    # حجم تقریبی پله‌ها در صورت ورود ابعاد
+    if (
+        steps
+        and step_riser
+        and step_tread
+    ):
+
+        concrete += (
+            steps
+            * step_riser
+            * step_tread
+            * width_m
+        )
+
+    final = finalize_rebar_details(
+        details
+    )
 
     return {
-        "type": "stair",
-        "count": count,
-        "concrete": round(concrete, 3),
-        "rebar": summary,
+
+        "type":
+            "stair",
+
+        "concrete_m3":
+            concrete,
+
+        "total_concrete_m3":
+            concrete,
+
+        "rebar_details":
+            final,
+
+        "total_rebar_kg":
+            sum(
+                x["weight_kg"]
+                for x in final
+            )
     }
 
 
-# ============================================================
-# سقف
-# ============================================================
+# =========================================================
+# ضرایب بتن سقف
+# =========================================================
 
 ROOF_CONCRETE_COEFFICIENTS = {
-    "تیرچه یونولیتی": 0.18,
-    "تیرچه سفالی": 0.20,
-    "تیرچه دوبل": 0.23,
-    "کرومیت": 0.18,
-    "کامپوزیت": 0.15,
-    "عرشه فولادی": 0.15,
-    "دال بتنی": 0.20,
-    "وافل": 0.20,
+
+    "تیرچه یونولیتی":
+        0.18,
+
+    "تیرچه سفالی":
+        0.20,
+
+    "تیرچه دوبل":
+        0.23,
+
+    "کرومیت":
+        0.18,
+
+    "کامپوزیت":
+        0.15,
+
+    "عرشه فولادی":
+        0.15,
+
+    "دال بتنی":
+        0.20,
+
+    "وافل":
+        0.20,
 }
 
 
 def roof_slab(
+
     roof_type,
     area_m2,
-    rebar_kg_per_m2=0,
+    rebar_kg_per_m2=0
 ):
 
-    area_m2 = float(area_m2)
+    coefficient = (
+        ROOF_CONCRETE_COEFFICIENTS[
+            roof_type
+        ]
+    )
 
-    if roof_type not in ROOF_CONCRETE_COEFFICIENTS:
-        raise ValueError(
-            f"نوع سقف «{roof_type}» تعریف نشده است."
-        )
-
-    coefficient = ROOF_CONCRETE_COEFFICIENTS[
-        roof_type
-    ]
-
-    concrete = area_m2 * coefficient
-
-    rebar_weight_total = (
-        area_m2 * float(rebar_kg_per_m2)
+    concrete = (
+        area_m2
+        * coefficient
     )
 
     return {
-        "type": "roof",
-        "roof_type": roof_type,
-        "area": round(area_m2, 2),
-        "concrete": round(concrete, 3),
-        "rebar_weight": round(
-            rebar_weight_total,
-            2
-        ),
+
+        "type":
+            "roof",
+
+        "roof_type":
+            roof_type,
+
+        "area":
+            area_m2,
+
+        "concrete_m3":
+            concrete,
+
+        "total_concrete_m3":
+            concrete,
+
+        "rebar_details":
+            [],
+
+        "total_rebar_kg":
+            area_m2
+            * rebar_kg_per_m2
     }
-
-
-# ============================================================
-# تست سریع فایل
-# ============================================================
-
-if __name__ == "__main__":
-
-    result = isolated_footing(
-        count=4,
-        length_m=2,
-        width_m=2,
-        thickness_m=0.5,
-        lean_concrete_length_m=2.2,
-        lean_concrete_width_m=2.2,
-        lean_concrete_thickness_m=0.1,
-        bottom_diameter_mm=16,
-        bottom_spacing_mm=150,
-        top_diameter_mm=12,
-        top_spacing_mm=200,
-        cover_mm=50,
-        pedestal_length_m=0.5,
-        pedestal_width_m=0.5,
-        pedestal_height_m=0.6,
-    )
-
-    print("===== TEST =====")
-    print("Concrete:", result["total_concrete"], "m3")
-    print("Rebar:", result["rebar"]["total_weight"], "kg")
-    print()
-
-    for item in result["rebar"]["details"]:
-        print(
-            f"Φ{item['diameter']} | "
-            f"{item['pieces']} قطعه | "
-            f"{item['piece_length']} m | "
-            f"{item['weight']} kg | "
-            f"{item['bars_12m']} شاخه 12m"
-        )
