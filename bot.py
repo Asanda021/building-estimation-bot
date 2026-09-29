@@ -8,6 +8,9 @@ from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardRemove,
 )
 
 from telegram.ext import (
@@ -50,34 +53,27 @@ RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL")
 
 
 # =========================================================
-# TEXT
+# CONSTANTS
 # =========================================================
 
-TEXT = {
-    "fa": {
-        "home": "🏗️ اسکلت بتنی",
-        "foundation": "🧱 فونداسیون",
-        "columns": "🏛️ ستون‌ها",
-        "beams": "📐 تیرها",
-        "roofs": "🏠 سقف‌ها",
-        "stairs": "🪜 راه‌پله",
-        "ties": "🔗 شناژ و کلاف",
-        "walls": "🧱 دیوارها",
-        "summary": "📊 خلاصه پروژه",
-        "settings": "⚙️ تنظیمات",
-        "help": "ℹ️ راهنما",
-        "back": "🔙 بازگشت",
-        "previous": "⬅️ مرحله قبل",
-        "cancel": "❌ لغو",
-        "rebar": "🔩 جزئیات میلگرد",
-        "cutlist": "✂️ Cut List",
-        "invalid": "❌ مقدار واردشده معتبر نیست.",
-    }
-}
+MENU_TEXT = "☰ منو"
 
 
-def t(context, key):
-    return TEXT["fa"].get(key, key)
+# =========================================================
+# PERSISTENT BOTTOM MENU
+# =========================================================
+
+def bottom_menu():
+    return ReplyKeyboardMarkup(
+        [
+            [
+                KeyboardButton(MENU_TEXT)
+            ]
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="انتخاب از منوی ربات..."
+    )
 
 
 # =========================================================
@@ -91,21 +87,27 @@ def clear_state(context):
 def get_data(context):
     if "data" not in context.user_data:
         context.user_data["data"] = {}
+
     return context.user_data["data"]
 
 
 # =========================================================
-# KEYBOARDS
+# BUTTON
 # =========================================================
 
 def button(text, callback):
     return InlineKeyboardButton(
-        text,
+        text=text,
         callback_data=callback
     )
 
 
+# =========================================================
+# MAIN INLINE MENU
+# =========================================================
+
 def home_keyboard():
+
     return InlineKeyboardMarkup([
         [
             button("🧱 فونداسیون", "foundation"),
@@ -136,28 +138,31 @@ def home_keyboard():
 # HOME
 # =========================================================
 
+HOME_TEXT = (
+    "🏗️ <b>برآورد اسکلت بتنی</b>\n\n"
+    "سیستم برآورد اولیه مقادیر مصالح و میلگرد\n"
+    "برای اعضای مختلف اسکلت بتنی.\n\n"
+    "👇 بخش موردنظر را انتخاب کنید:"
+)
+
+
 async def show_home(update, context):
 
     clear_state(context)
 
-    text = (
-        "🏗️ اسکلت بتنی\n\n"
-        "🧱 فونداسیون    🏛️ ستون‌ها\n"
-        "📐 تیرها        🏠 سقف‌ها\n"
-        "🪜 راه‌پله      🔗 شناژ و کلاف\n"
-        "🧱 دیوارها\n\n"
-        "📊 خلاصه پروژه\n"
-        "⚙️ تنظیمات      ℹ️ راهنما"
-    )
-
     if update.callback_query:
+
         await update.callback_query.edit_message_text(
-            text,
+            HOME_TEXT,
+            parse_mode="HTML",
             reply_markup=home_keyboard()
         )
+
     else:
+
         await update.message.reply_text(
-            text,
+            HOME_TEXT,
+            parse_mode="HTML",
             reply_markup=home_keyboard()
         )
 
@@ -167,7 +172,15 @@ async def start(update, context):
     clear_state(context)
 
     await update.message.reply_text(
-        "🏗️ به ربات برآورد اسکلت بتنی خوش آمدید.",
+        "🏗️ <b>به ربات برآورد اسکلت بتنی خوش آمدید.</b>\n\n"
+        "برای شروع روی «☰ منو» بزنید.",
+        parse_mode="HTML",
+        reply_markup=bottom_menu()
+    )
+
+    await update.message.reply_text(
+        HOME_TEXT,
+        parse_mode="HTML",
         reply_markup=home_keyboard()
     )
 
@@ -181,17 +194,48 @@ async def foundation_menu(update, context):
     clear_state(context)
 
     keyboard = InlineKeyboardMarkup([
-        [button("پی منفرد", "foundation_isolated")],
-        [button("پی نواری", "foundation_strip")],
-        [button("پی گسترده / رادیه", "foundation_raft")],
-        [button("🔙 بازگشت", "home")],
+        [
+            button("◼️ پی منفرد", "foundation_isolated")
+        ],
+        [
+            button("▬ پی نواری", "foundation_strip")
+        ],
+        [
+            button("▣ پی گسترده / رادیه", "foundation_raft")
+        ],
+        [
+            button("🔙 بازگشت", "home")
+        ],
     ])
 
     await update.callback_query.edit_message_text(
-        "🧱 فونداسیون\n\n"
+        "🧱 <b>فونداسیون</b>\n\n"
         "نوع فونداسیون را انتخاب کنید:",
+        parse_mode="HTML",
         reply_markup=keyboard
     )
+
+
+# =========================================================
+# FIELD HELPERS
+# =========================================================
+
+def parse_number(text):
+
+    text = text.strip()
+
+    text = text.replace(",", ".")
+    text = text.replace("٫", ".")
+
+    return float(text)
+
+
+def fmt(value, decimals=2):
+
+    try:
+        return f"{float(value):.{decimals}f}"
+    except Exception:
+        return "0"
 
 
 # =========================================================
@@ -208,14 +252,26 @@ ISOLATED_FIELDS = [
     ("lean_thickness", "ضخامت بتن مگر (m)"),
     ("bottom_diameter", "قطر میلگرد پایین (mm)"),
     ("bottom_spacing", "فاصله میلگرد پایین (mm)"),
-    ("top_diameter", "قطر میلگرد بالا (mm) - اگر ندارد 0"),
-    ("top_spacing", "فاصله میلگرد بالا (mm) - اگر ندارد 0"),
+    ("top_diameter", "قطر میلگرد بالا (mm) — اگر ندارد 0"),
+    ("top_spacing", "فاصله میلگرد بالا (mm) — اگر ندارد 0"),
     ("cover", "کاور (mm)"),
     ("lap", "درصد اورلپ"),
     ("pedestal_length", "طول پدستال (m)"),
     ("pedestal_width", "عرض پدستال (m)"),
     ("pedestal_height", "ارتفاع پدستال (m)"),
 ]
+
+
+def wizard_keyboard(back_callback):
+
+    return InlineKeyboardMarkup([
+        [
+            button("⬅️ مرحله قبل", "wizard_previous")
+        ],
+        [
+            button("❌ لغو", back_callback)
+        ],
+    ])
 
 
 async def start_isolated(update, context):
@@ -225,12 +281,16 @@ async def start_isolated(update, context):
     data = get_data(context)
 
     data["mode"] = "isolated"
-    data["index"] = 0
     data["fields"] = {}
+    data["index"] = 0
+    data["parent"] = "foundation"
 
     await update.callback_query.edit_message_text(
-        "🧱 پی منفرد\n\n"
-        "برای شروع تعداد پی را وارد کنید:"
+        "🧱 <b>محاسبه پی منفرد</b>\n\n"
+        "مرحله ۱ از ۱۶\n\n"
+        "تعداد پی را وارد کنید:",
+        parse_mode="HTML",
+        reply_markup=wizard_keyboard("foundation")
     )
 
 
@@ -246,82 +306,120 @@ async def isolated_receive(update, context):
     key, title = ISOLATED_FIELDS[index]
 
     try:
-        value = float(
-            update.message.text.strip().replace(",", ".")
-        )
+        value = parse_number(update.message.text)
+
     except ValueError:
 
         await update.message.reply_text(
-            "❌ لطفاً فقط عدد وارد کنید."
+            "❌ مقدار واردشده معتبر نیست.\n"
+            "لطفاً فقط عدد وارد کنید.",
+            reply_markup=wizard_keyboard("foundation")
+        )
+        return
+
+    if value < 0:
+
+        await update.message.reply_text(
+            "❌ مقدار نمی‌تواند منفی باشد."
         )
         return
 
     data["fields"][key] = value
     data["index"] = index + 1
 
-    # هنوز اطلاعات باقی مانده
     if data["index"] < len(ISOLATED_FIELDS):
 
-        next_title = ISOLATED_FIELDS[data["index"]][1]
-
-        keyboard = InlineKeyboardMarkup([
-            [
-                button(
-                    "⬅️ مرحله قبل",
-                    "isolated_previous"
-                )
-            ],
-            [
-                button(
-                    "❌ لغو",
-                    "foundation"
-                )
-            ],
-        ])
+        next_title = ISOLATED_FIELDS[
+            data["index"]
+        ][1]
 
         await update.message.reply_text(
             f"✅ ثبت شد.\n\n"
-            f"{next_title}:",
-            reply_markup=keyboard
+            f"مرحله {data['index'] + 1} از "
+            f"{len(ISOLATED_FIELDS)}\n\n"
+            f"<b>{next_title}</b>:",
+            parse_mode="HTML",
+            reply_markup=wizard_keyboard("foundation")
         )
 
         return
 
-    # آخرین فیلد
     await calculate_isolated(update, context)
 
 
 # =========================================================
-# PREVIOUS ISOLATED
+# GENERIC PREVIOUS
 # =========================================================
 
-async def isolated_previous(update, context):
+async def wizard_previous(update, context):
 
     query = update.callback_query
     await query.answer()
 
     data = get_data(context)
 
-    index = data.get("index", 0)
+    mode = data.get("mode")
 
-    if index <= 0:
-        await query.answer(
-            "این اولین مرحله است.",
-            show_alert=True
+    if mode == "isolated":
+
+        index = data.get("index", 0)
+
+        if index <= 0:
+
+            await query.answer(
+                "این اولین مرحله است.",
+                show_alert=True
+            )
+            return
+
+        index -= 1
+
+        key, title = ISOLATED_FIELDS[index]
+
+        data["index"] = index
+        data["fields"].pop(key, None)
+
+        await query.edit_message_text(
+            f"⬅️ <b>مرحله قبل</b>\n\n"
+            f"مرحله {index + 1} از "
+            f"{len(ISOLATED_FIELDS)}\n\n"
+            f"<b>{title}</b>:",
+            parse_mode="HTML",
+            reply_markup=wizard_keyboard("foundation")
         )
+
         return
 
-    index -= 1
+    fields = data.get("fields_list")
 
-    key, title = ISOLATED_FIELDS[index]
+    if fields:
 
-    data["index"] = index
-    data["fields"].pop(key, None)
+        index = data.get("index", 0)
 
-    await query.edit_message_text(
-        f"⬅️ مرحله قبل\n\n"
-        f"{title}:"
-    )
+        if index <= 0:
+
+            await query.answer(
+                "این اولین مرحله است.",
+                show_alert=True
+            )
+            return
+
+        index -= 1
+
+        key, title = fields[index]
+
+        data["index"] = index
+        data["fields"].pop(key, None)
+
+        await query.edit_message_text(
+            f"⬅️ <b>مرحله قبل</b>\n\n"
+            f"مرحله {index + 1} از {len(fields)}\n\n"
+            f"<b>{title}</b>:",
+            parse_mode="HTML",
+            reply_markup=wizard_keyboard(
+                data.get("back_callback", "home")
+            )
+        )
 
 
 # =========================================================
@@ -384,65 +482,88 @@ async def calculate_isolated(update, context):
         )
 
         await update.message.reply_text(
-            "❌ خطا در محاسبه:\n\n"
-            f"{str(e)}"
+            "❌ <b>خطا در محاسبه</b>\n\n"
+            f"{str(e)}",
+            parse_mode="HTML"
         )
 
 
 # =========================================================
-# RESULT HELPERS
+# REBAR HELPERS
 # =========================================================
 
-def get_number(result, *keys):
+def get_rebar_summary(result):
 
-    for key in keys:
+    rebar = result.get("rebar", {})
 
-        value = result.get(key)
+    if not isinstance(rebar, dict):
+        return {
+            "details": [],
+            "total_weight": 0,
+            "total_length": 0,
+        }
 
-        if value is not None:
-            try:
-                return float(value)
-            except:
-                pass
+    return {
+        "details": rebar.get("details", []),
+        "total_weight": float(
+            rebar.get("total_weight", 0)
+        ),
+        "total_length": float(
+            rebar.get("total_length", 0)
+        ),
+    }
 
-    return 0.0
+
+def get_total_rebar(result):
+
+    rebar = result.get("rebar", {})
+
+    if isinstance(rebar, dict):
+
+        return float(
+            rebar.get(
+                "total_weight",
+                0
+            )
+        )
+
+    return 0
 
 
-def get_rebar_details(result):
+# =========================================================
+# RESULT KEYBOARD
+# =========================================================
 
-    details = result.get("rebar_details")
+def result_keyboard(
+    rebar_callback,
+    cutlist_callback,
+    back_callback
+):
 
-    if details:
-        return details
-
-    details = result.get("rebar")
-
-    if isinstance(details, list):
-        return details
-
-    if isinstance(details, dict):
-
-        output = []
-
-        for diameter, item in details.items():
-
-            if isinstance(item, dict):
-
-                output.append({
-                    "diameter_mm": diameter,
-                    "weight_kg": item.get(
-                        "weight_kg",
-                        item.get("weight", 0)
-                    ),
-                    "pieces": item.get(
-                        "pieces",
-                        item.get("count", 0)
-                    ),
-                })
-
-        return output
-
-    return []
+    return InlineKeyboardMarkup([
+        [
+            button(
+                "🔩 جزئیات میلگرد",
+                rebar_callback
+            )
+        ],
+        [
+            button(
+                "✂️ Cut List",
+                cutlist_callback
+            )
+        ],
+        [
+            button(
+                "🔙 بازگشت",
+                back_callback
+            ),
+            button(
+                "🏠 خانه",
+                "home"
+            )
+        ],
+    ])
 
 
 # =========================================================
@@ -451,97 +572,77 @@ def get_rebar_details(result):
 
 async def show_isolated_result(update, context):
 
-    result = get_data(context)["result"]
+    data = get_data(context)
+    result = data.get("result")
 
-    footing_concrete = get_number(
-        result,
-        "footing_concrete_m3",
-        "concrete_m3"
+    if not result:
+        return
+
+    footing_concrete = float(
+        result.get("footing_concrete", 0)
     )
 
-    pedestal_concrete = get_number(
-        result,
-        "pedestal_concrete_m3"
+    pedestal_concrete = float(
+        result.get("pedestal_concrete", 0)
     )
 
-    lean_concrete = get_number(
-        result,
-        "lean_concrete_m3",
-        "lean_concrete"
+    lean_concrete = float(
+        result.get("lean_concrete", 0)
     )
 
-    structural_concrete = get_number(
-        result,
-        "structural_concrete_m3"
+    total_concrete = float(
+        result.get("total_concrete", 0)
     )
 
-    if structural_concrete == 0:
+    total_rebar = get_total_rebar(result)
 
-        structural_concrete = (
-            footing_concrete +
-            pedestal_concrete
+    count = int(
+        result.get(
+            "count",
+            data["fields"].get("count", 0)
         )
-
-    total_concrete = (
-        structural_concrete +
-        lean_concrete
-    )
-
-    total_rebar = get_number(
-        result,
-        "total_rebar_kg",
-        "rebar_weight"
     )
 
     text = (
-        "🏗️ نتیجه پی منفرد\n\n"
+        "🏗️ <b>نتیجه پی منفرد</b>\n\n"
         "```text\n"
         "┌────────────────────────┐\n"
-        f"│ تعداد پی       {int(result.get('count', get_data(context)['fields']['count'])):>5} │\n"
-        f"│ بتن پی        {footing_concrete:>7.2f} m³ │\n"
-        f"│ پدستال        {pedestal_concrete:>7.2f} m³ │\n"
-        f"│ بتن مگر       {lean_concrete:>7.2f} m³ │\n"
-        "│ ────────────────────── │\n"
-        f"│ کل بتن        {total_concrete:>7.2f} m³ │\n"
-        f"│ کل میلگرد     {total_rebar:>7.1f} kg │\n"
+        f"│ تعداد پی      {count:>6} عدد │\n"
+        f"│ بتن پی        {footing_concrete:>6.2f} m³ │\n"
+        f"│ پدستال        {pedestal_concrete:>6.2f} m³ │\n"
+        f"│ بتن مگر       {lean_concrete:>6.2f} m³ │\n"
+        "│────────────────────────│\n"
+        f"│ کل بتن        {total_concrete:>6.2f} m³ │\n"
+        f"│ کل میلگرد     {total_rebar:>6.1f} kg │\n"
         "└────────────────────────┘\n"
         "```"
     )
 
-    keyboard = InlineKeyboardMarkup([
-        [
-            button(
-                "🔩 جزئیات میلگرد",
-                "isolated_rebar"
-            )
-        ],
-        [
-            button(
-                "✂️ Cut List",
-                "isolated_cutlist"
-            )
-        ],
-        [
-            button(
-                "🧱 فونداسیون",
-                "foundation"
-            ),
-            button(
-                "🏠 منوی اصلی",
-                "home"
-            )
-        ],
-    ])
-
-    await update.message.reply_text(
-        text,
-        parse_mode="Markdown",
-        reply_markup=keyboard
+    keyboard = result_keyboard(
+        "isolated_rebar",
+        "isolated_cutlist",
+        "foundation"
     )
+
+    if update.callback_query:
+
+        await update.callback_query.edit_message_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=keyboard
+        )
+
+    else:
+
+        await update.message.reply_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=keyboard
+        )
 
 
 # =========================================================
-# REBAR RESULT
+# ISOLATED REBAR
 # =========================================================
 
 async def isolated_rebar(update, context):
@@ -549,65 +650,66 @@ async def isolated_rebar(update, context):
     query = update.callback_query
     await query.answer()
 
-    result = get_data(context)["result"]
+    result = get_data(context).get("result", {})
 
-    details = get_rebar_details(result)
+    summary = get_rebar_summary(result)
+    details = summary["details"]
+
+    lines = [
+        "🔩 <b>جزئیات میلگرد پی</b>",
+        "",
+        "```text",
+        "قطر      قطعه      طول      وزن",
+        "────────────────────────────",
+    ]
 
     if not details:
 
-        text = (
-            "🔩 جزئیات میلگرد\n\n"
-            "اطلاعات میلگرد در خروجی محاسبات پیدا نشد."
+        lines.append(
+            "اطلاعات میلگرد موجود نیست."
         )
 
     else:
 
-        lines = [
-            "🔩 جزئیات میلگرد",
-            "",
-            "```text",
-            "قطر       وزن        تعداد",
-            "────────────────────────",
-        ]
-
-        total = 0
-
         for item in details:
 
             diameter = item.get(
-                "diameter_mm",
+                "diameter",
                 0
             )
 
-            weight = float(
-                item.get(
-                    "weight_kg",
-                    0
-                )
+            pieces = item.get(
+                "pieces",
+                0
             )
 
-            pieces = int(
-                item.get(
-                    "pieces",
-                    0
-                )
+            length = item.get(
+                "piece_length",
+                0
             )
 
-            total += weight
+            weight = item.get(
+                "weight",
+                0
+            )
 
             lines.append(
-                f"Φ{diameter:<4}"
-                f"{weight:>9.1f} kg"
-                f"{pieces:>8}"
+                f"Φ{int(diameter):<5}"
+                f"{int(pieces):>6}"
+                f"{float(length):>9.2f}"
+                f"{float(weight):>9.1f}"
             )
 
-        lines.extend([
-            "────────────────────────",
-            f"جمع      {total:>9.1f} kg",
-            "```",
-        ])
+        lines.append(
+            "────────────────────────────"
+        )
 
-        text = "\n".join(lines)
+        lines.append(
+            f"جمع میلگرد: "
+            f"{summary['total_weight']:.1f} kg"
+        )
+
+    lines.append("```")
 
     keyboard = InlineKeyboardMarkup([
         [
@@ -618,15 +720,21 @@ async def isolated_rebar(update, context):
         ],
         [
             button(
-                "🏠 منوی اصلی",
+                "✂️ Cut List",
+                "isolated_cutlist"
+            )
+        ],
+        [
+            button(
+                "🏠 خانه",
                 "home"
             )
         ],
     ])
 
     await query.edit_message_text(
-        text,
-        parse_mode="Markdown",
+        "\n".join(lines),
+        parse_mode="HTML",
         reply_markup=keyboard
     )
 
@@ -640,76 +748,57 @@ async def isolated_cutlist(update, context):
     query = update.callback_query
     await query.answer()
 
-    result = get_data(context)["result"]
+    result = get_data(context).get("result", {})
 
-    cutlist = result.get(
-        "cut_list",
-        []
-    )
+    summary = get_rebar_summary(result)
+    details = summary["details"]
 
-    if not cutlist:
+    lines = [
+        "✂️ <b>Cut List</b>",
+        "",
+        "```text",
+        "قطر      طول قطعه      تعداد",
+        "──────────────────────────",
+    ]
 
-        # بعضی نسخه‌های calculations ممکن است
-        # نام دیگری برای Cut List داشته باشند.
-        cutlist = result.get(
-            "cutlist",
-            result.get(
-                "cut_list_details",
-                []
-            )
-        )
+    if not details:
 
-    if not cutlist:
-
-        text = (
-            "✂️ Cut List\n\n"
-            "در خروجی فعلی Cut List ثبت نشده است."
+        lines.append(
+            "اطلاعات برش موجود نیست."
         )
 
     else:
 
-        lines = [
-            "✂️ Cut List",
-            "",
-            "```text",
-            "قطر      طول قطعه      تعداد",
-            "──────────────────────────",
-        ]
-
-        for item in cutlist:
+        for item in details:
 
             diameter = item.get(
-                "diameter_mm",
+                "diameter",
                 0
             )
 
             length = item.get(
-                "length_m",
-                item.get(
-                    "piece_length_m",
-                    0
-                )
+                "piece_length",
+                0
             )
 
-            count = item.get(
-                "count",
-                item.get(
-                    "pieces",
-                    0
-                )
+            pieces = item.get(
+                "pieces",
+                0
             )
 
             lines.append(
-                f"Φ{diameter:<5}"
+                f"Φ{int(diameter):<6}"
                 f"{float(length):>8.2f} m"
-                f"{int(count):>8}"
+                f"{int(pieces):>8}"
             )
 
-        lines.append(
-            "```"
-        )
+    lines.append("```")
 
-        text = "\n".join(lines)
+    lines.append(
+        "\n⚠️ Cut List فعلی بر اساس طول قطعات محاسباتی "
+        "است و هنوز بهینه‌سازی واقعی شاخه‌های ۱۲ متری "
+        "در خروجی نهایی متصل نشده است."
+    )
 
     keyboard = InlineKeyboardMarkup([
         [
@@ -720,51 +809,185 @@ async def isolated_cutlist(update, context):
         ],
         [
             button(
-                "🏠 منوی اصلی",
+                "🔩 میلگرد",
+                "isolated_rebar"
+            )
+        ],
+        [
+            button(
+                "🏠 خانه",
                 "home"
             )
         ],
     ])
 
     await query.edit_message_text(
-        text,
-        parse_mode="Markdown",
+        "\n".join(lines),
+        parse_mode="HTML",
         reply_markup=keyboard
     )
 
 
 # =========================================================
-# COLUMNS MENU
+# STRIP FOOTING
 # =========================================================
 
-async def columns_menu(update, context):
+async def start_strip(update, context):
 
-    clear_state(context)
+    fields = [
+        ("count", "تعداد نوار"),
+        ("length", "طول نوار (m)"),
+        ("width", "عرض پی (m)"),
+        ("thickness", "ضخامت پی (m)"),
+        ("lean_length", "طول بتن مگر (m)"),
+        ("lean_width", "عرض بتن مگر (m)"),
+        ("lean_thickness", "ضخامت بتن مگر (m)"),
+        ("long_diameter", "قطر میلگرد طولی پایین (mm)"),
+        ("long_count", "تعداد میلگرد طولی پایین"),
+        ("trans_diameter", "قطر میلگرد عرضی پایین (mm)"),
+        ("trans_spacing", "فاصله میلگرد عرضی پایین (mm)"),
+        ("top_long_diameter", "قطر میلگرد طولی بالا (mm) — اگر ندارد 0"),
+        ("top_long_count", "تعداد میلگرد طولی بالا — اگر ندارد 0"),
+        ("top_trans_diameter", "قطر میلگرد عرضی بالا (mm) — اگر ندارد 0"),
+        ("top_trans_spacing", "فاصله میلگرد عرضی بالا (mm) — اگر ندارد 0"),
+        ("cover", "کاور (mm)"),
+        ("lap", "درصد اورلپ"),
+    ]
 
-    keyboard = InlineKeyboardMarkup([
-        [button(
-            "ستون مربعی / مستطیلی",
-            "column_rect"
-        )],
-        [button(
-            "ستون گرد",
-            "column_round"
-        )],
-        [button(
-            "🔙 بازگشت",
-            "home"
-        )],
-    ])
+    def calc(f):
 
-    await update.callback_query.edit_message_text(
-        "🏛️ ستون‌ها\n\n"
-        "نوع ستون را انتخاب کنید:",
-        reply_markup=keyboard
+        return strip_footing(
+            strip_count=int(f["count"]),
+            strip_length_m=f["length"],
+            footing_width_m=f["width"],
+            footing_thickness_m=f["thickness"],
+            lean_length_m=f["lean_length"],
+            lean_width_m=f["lean_width"],
+            lean_thickness_m=f["lean_thickness"],
+            longitudinal_diameter_mm=int(
+                f["long_diameter"]
+            ),
+            longitudinal_count=int(
+                f["long_count"]
+            ),
+            transverse_diameter_mm=int(
+                f["trans_diameter"]
+            ),
+            transverse_spacing_mm=f["trans_spacing"],
+            top_longitudinal_diameter_mm=(
+                int(f["top_long_diameter"])
+                if f["top_long_diameter"] > 0
+                else None
+            ),
+            top_longitudinal_count=(
+                int(f["top_long_count"])
+                if f["top_long_count"] > 0
+                else None
+            ),
+            top_transverse_diameter_mm=(
+                int(f["top_trans_diameter"])
+                if f["top_trans_diameter"] > 0
+                else None
+            ),
+            top_transverse_spacing_mm=(
+                f["top_trans_spacing"]
+                if f["top_trans_spacing"] > 0
+                else None
+            ),
+            cover_mm=f["cover"],
+            lap_percent=f["lap"],
+        )
+
+    await start_generic(
+        update,
+        context,
+        "strip",
+        "▬ پی نواری",
+        fields,
+        calc,
+        "foundation"
     )
 
 
 # =========================================================
-# GENERIC CALCULATION
+# RAFT
+# =========================================================
+
+async def start_raft(update, context):
+
+    fields = [
+        ("length", "طول رادیه (m)"),
+        ("width", "عرض رادیه (m)"),
+        ("thickness", "ضخامت رادیه (m)"),
+        ("lean_length", "طول بتن مگر (m)"),
+        ("lean_width", "عرض بتن مگر (m)"),
+        ("lean_thickness", "ضخامت بتن مگر (m)"),
+        ("bottom_x_diameter", "قطر میلگرد پایین X (mm)"),
+        ("bottom_x_spacing", "فاصله میلگرد پایین X (mm)"),
+        ("bottom_y_diameter", "قطر میلگرد پایین Y (mm)"),
+        ("bottom_y_spacing", "فاصله میلگرد پایین Y (mm)"),
+        ("top_x_diameter", "قطر میلگرد بالا X (mm) — اگر ندارد 0"),
+        ("top_x_spacing", "فاصله میلگرد بالا X (mm) — اگر ندارد 0"),
+        ("top_y_diameter", "قطر میلگرد بالا Y (mm) — اگر ندارد 0"),
+        ("top_y_spacing", "فاصله میلگرد بالا Y (mm) — اگر ندارد 0"),
+        ("cover", "کاور (mm)"),
+        ("lap", "درصد اورلپ"),
+    ]
+
+    def calc(f):
+
+        return raft_foundation(
+            length_m=f["length"],
+            width_m=f["width"],
+            thickness_m=f["thickness"],
+            lean_length_m=f["lean_length"],
+            lean_width_m=f["lean_width"],
+            lean_thickness_m=f["lean_thickness"],
+            bottom_x_diameter_mm=int(
+                f["bottom_x_diameter"]
+            ),
+            bottom_x_spacing_mm=f["bottom_x_spacing"],
+            bottom_y_diameter_mm=int(
+                f["bottom_y_diameter"]
+            ),
+            bottom_y_spacing_mm=f["bottom_y_spacing"],
+            top_x_diameter_mm=(
+                int(f["top_x_diameter"])
+                if f["top_x_diameter"] > 0
+                else None
+            ),
+            top_x_spacing_mm=(
+                f["top_x_spacing"]
+                if f["top_x_spacing"] > 0
+                else None
+            ),
+            top_y_diameter_mm=(
+                int(f["top_y_diameter"])
+                if f["top_y_diameter"] > 0
+                else None
+            ),
+            top_y_spacing_mm=(
+                f["top_y_spacing"]
+                if f["top_y_spacing"] > 0
+                else None
+            ),
+            cover_mm=f["cover"],
+            lap_percent=f["lap"],
+        )
+
+    await start_generic(
+        update,
+        context,
+        "raft",
+        "▣ پی گسترده / رادیه",
+        fields,
+        calc,
+        "foundation"
+    )
+
+
+# =========================================================
+# GENERIC WIZARD
 # =========================================================
 
 async def start_generic(
@@ -790,8 +1013,11 @@ async def start_generic(
     data["back_callback"] = back_callback
 
     await update.callback_query.edit_message_text(
-        f"{title}\n\n"
-        f"{fields[0][1]}:"
+        f"🏗️ <b>{title}</b>\n\n"
+        f"مرحله 1 از {len(fields)}\n\n"
+        f"<b>{fields[0][1]}</b>:",
+        parse_mode="HTML",
+        reply_markup=wizard_keyboard(back_callback)
     )
 
 
@@ -799,17 +1025,18 @@ async def generic_receive(update, context):
 
     data = get_data(context)
 
-    fields = data["fields_list"]
-    index = data["index"]
+    fields = data.get("fields_list", [])
+    index = data.get("index", 0)
+
+    if index >= len(fields):
+        return
 
     key, title = fields[index]
 
     try:
 
-        value = float(
+        value = parse_number(
             update.message.text
-            .strip()
-            .replace(",", ".")
         )
 
     except ValueError:
@@ -817,7 +1044,13 @@ async def generic_receive(update, context):
         await update.message.reply_text(
             "❌ لطفاً فقط عدد وارد کنید."
         )
+        return
 
+    if value < 0:
+
+        await update.message.reply_text(
+            "❌ مقدار نمی‌تواند منفی باشد."
+        )
         return
 
     data["fields"][key] = value
@@ -825,27 +1058,19 @@ async def generic_receive(update, context):
 
     if data["index"] < len(fields):
 
-        next_title = fields[data["index"]][1]
-
-        keyboard = InlineKeyboardMarkup([
-            [
-                button(
-                    "⬅️ مرحله قبل",
-                    "generic_previous"
-                )
-            ],
-            [
-                button(
-                    "❌ لغو",
-                    data["back_callback"]
-                )
-            ],
-        ])
+        next_title = fields[
+            data["index"]
+        ][1]
 
         await update.message.reply_text(
             f"✅ ثبت شد.\n\n"
-            f"{next_title}:",
-            reply_markup=keyboard
+            f"مرحله {data['index'] + 1} از "
+            f"{len(fields)}\n\n"
+            f"<b>{next_title}</b>:",
+            parse_mode="HTML",
+            reply_markup=wizard_keyboard(
+                data["back_callback"]
+            )
         )
 
         return
@@ -870,40 +1095,10 @@ async def generic_receive(update, context):
         )
 
         await update.message.reply_text(
-            "❌ خطا در محاسبه:\n\n"
-            f"{str(e)}"
+            "❌ <b>خطا در محاسبه</b>\n\n"
+            f"{str(e)}",
+            parse_mode="HTML"
         )
-
-
-async def generic_previous(update, context):
-
-    query = update.callback_query
-    await query.answer()
-
-    data = get_data(context)
-
-    index = data["index"]
-
-    if index <= 0:
-
-        await query.answer(
-            "این اولین مرحله است.",
-            show_alert=True
-        )
-
-        return
-
-    index -= 1
-
-    key, title = data["fields_list"][index]
-
-    data["index"] = index
-    data["fields"].pop(key, None)
-
-    await query.edit_message_text(
-        f"⬅️ مرحله قبل\n\n"
-        f"{title}:"
-    )
 
 
 # =========================================================
@@ -913,69 +1108,58 @@ async def generic_previous(update, context):
 async def show_generic_result(update, context):
 
     data = get_data(context)
-    result = data["result"]
+    result = data.get("result", {})
 
-    concrete = get_number(
-        result,
-        "total_concrete_m3",
-        "concrete",
-        "total_concrete"
+    concrete = float(
+        result.get("total_concrete", 0)
     )
 
-    rebar = get_number(
-        result,
-        "total_rebar_kg",
-        "rebar_weight"
-    )
+    if concrete == 0:
+        concrete = float(
+            result.get("concrete", 0)
+        )
+
+    rebar = get_total_rebar(result)
 
     title = data.get(
         "title",
-        "نتیجه"
+        "نتیجه محاسبه"
     )
 
     text = (
-        f"🏗️ {title}\n\n"
+        f"🏗️ <b>نتیجه {title}</b>\n\n"
         "```text\n"
-        "┌──────────────────────┐\n"
-        f"│ بتن       {concrete:>8.2f} m³ │\n"
-        f"│ میلگرد    {rebar:>8.1f} kg │\n"
-        "└──────────────────────┘\n"
+        "┌────────────────────────┐\n"
+        f"│ کل بتن       {concrete:>7.2f} m³ │\n"
+        f"│ کل میلگرد    {rebar:>7.1f} kg │\n"
+        "└────────────────────────┘\n"
         "```"
     )
 
-    keyboard = InlineKeyboardMarkup([
-        [
-            button(
-                "🔩 جزئیات میلگرد",
-                "generic_rebar"
-            )
-        ],
-        [
-            button(
-                "✂️ Cut List",
-                "generic_cutlist"
-            )
-        ],
-        [
-            button(
-                "🔙 بازگشت",
-                data.get(
-                    "back_callback",
-                    "home"
-                )
-            ),
-            button(
-                "🏠 خانه",
-                "home"
-            )
-        ],
-    ])
-
-    await update.message.reply_text(
-        text,
-        parse_mode="Markdown",
-        reply_markup=keyboard
+    keyboard = result_keyboard(
+        "generic_rebar",
+        "generic_cutlist",
+        data.get(
+            "back_callback",
+            "home"
+        )
     )
+
+    if update.callback_query:
+
+        await update.callback_query.edit_message_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=keyboard
+        )
+
+    else:
+
+        await update.message.reply_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=keyboard
+        )
 
 
 async def generic_rebar(update, context):
@@ -983,74 +1167,81 @@ async def generic_rebar(update, context):
     query = update.callback_query
     await query.answer()
 
-    result = get_data(context)["result"]
+    result = get_data(context).get("result", {})
 
-    details = get_rebar_details(result)
+    summary = get_rebar_summary(result)
+    details = summary["details"]
+
+    lines = [
+        "🔩 <b>جزئیات میلگرد</b>",
+        "",
+        "```text",
+        "قطر      قطعه      طول      وزن",
+        "────────────────────────────",
+    ]
 
     if not details:
 
-        text = (
-            "🔩 جزئیات میلگرد\n\n"
-            "اطلاعاتی موجود نیست."
+        lines.append(
+            "اطلاعات میلگرد موجود نیست."
         )
 
     else:
 
-        lines = [
-            "🔩 جزئیات میلگرد",
-            "",
-            "```text",
-            "قطر       وزن        تعداد",
-            "────────────────────────",
-        ]
-
-        total = 0
-
         for item in details:
 
             diameter = item.get(
-                "diameter_mm",
+                "diameter",
                 0
             )
 
-            weight = float(
-                item.get(
-                    "weight_kg",
-                    0
-                )
+            pieces = item.get(
+                "pieces",
+                0
             )
 
-            pieces = int(
-                item.get(
-                    "pieces",
-                    0
-                )
+            length = item.get(
+                "piece_length",
+                0
             )
 
-            total += weight
+            weight = item.get(
+                "weight",
+                0
+            )
 
             lines.append(
-                f"Φ{diameter:<4}"
-                f"{weight:>9.1f} kg"
-                f"{pieces:>8}"
+                f"Φ{int(diameter):<5}"
+                f"{int(pieces):>6}"
+                f"{float(length):>9.2f}"
+                f"{float(weight):>9.1f}"
             )
 
-        lines.extend([
-            "────────────────────────",
-            f"جمع      {total:>9.1f} kg",
-            "```",
-        ])
+        lines.append(
+            "────────────────────────────"
+        )
 
-        text = "\n".join(lines)
+        lines.append(
+            f"جمع میلگرد: "
+            f"{summary['total_weight']:.1f} kg"
+        )
+
+    lines.append("```")
 
     await query.edit_message_text(
-        text,
-        parse_mode="Markdown",
+        "\n".join(lines),
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup([
             [
                 button(
                     "⬅️ نتیجه",
                     "generic_result"
+                )
+            ],
+            [
+                button(
+                    "✂️ Cut List",
+                    "generic_cutlist"
                 )
             ],
             [
@@ -1068,74 +1259,71 @@ async def generic_cutlist(update, context):
     query = update.callback_query
     await query.answer()
 
-    result = get_data(context)["result"]
+    result = get_data(context).get("result", {})
 
-    cutlist = result.get(
-        "cut_list",
-        result.get(
-            "cutlist",
-            []
-        )
-    )
+    summary = get_rebar_summary(result)
+    details = summary["details"]
 
-    if not cutlist:
+    lines = [
+        "✂️ <b>Cut List</b>",
+        "",
+        "```text",
+        "قطر      طول قطعه      تعداد",
+        "──────────────────────────",
+    ]
 
-        text = (
-            "✂️ Cut List\n\n"
-            "در خروجی فعلی موجود نیست."
+    if not details:
+
+        lines.append(
+            "اطلاعات برش موجود نیست."
         )
 
     else:
 
-        lines = [
-            "✂️ Cut List",
-            "",
-            "```text",
-            "قطر      طول قطعه      تعداد",
-            "──────────────────────────",
-        ]
-
-        for item in cutlist:
+        for item in details:
 
             diameter = item.get(
-                "diameter_mm",
+                "diameter",
                 0
             )
 
             length = item.get(
-                "length_m",
-                item.get(
-                    "piece_length_m",
-                    0
-                )
+                "piece_length",
+                0
             )
 
-            count = item.get(
-                "count",
-                item.get(
-                    "pieces",
-                    0
-                )
+            pieces = item.get(
+                "pieces",
+                0
             )
 
             lines.append(
-                f"Φ{diameter:<5}"
+                f"Φ{int(diameter):<6}"
                 f"{float(length):>8.2f} m"
-                f"{int(count):>8}"
+                f"{int(pieces):>8}"
             )
 
-        lines.append("```")
+    lines.append("```")
 
-        text = "\n".join(lines)
+    lines.append(
+        "\n⚠️ این Cut List فعلاً بر اساس "
+        "طول قطعات محاسباتی است."
+    )
 
     await query.edit_message_text(
-        text,
-        parse_mode="Markdown",
+        "\n".join(lines),
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup([
             [
                 button(
                     "⬅️ نتیجه",
                     "generic_result"
+                )
+            ],
+            [
+                button(
+                    "🔩 میلگرد",
+                    "generic_rebar"
                 )
             ],
             [
@@ -1149,90 +1337,51 @@ async def generic_cutlist(update, context):
 
 
 # =========================================================
-# SIMPLE SECTION MENUS
+# COLUMNS MENU
 # =========================================================
 
-async def beams_menu(update, context):
+async def columns_menu(update, context):
 
     clear_state(context)
 
     await update.callback_query.edit_message_text(
-        "📐 تیرها\n\n"
-        "نوع تیر را انتخاب کنید:",
+        "🏛️ <b>ستون‌ها</b>\n\n"
+        "نوع ستون را انتخاب کنید:",
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup([
-            [button("تیر اصلی", "beam_main")],
-            [button("تیر فرعی", "beam_secondary")],
-            [button("🔙 بازگشت", "home")],
+            [
+                button(
+                    "ستون مربعی / مستطیلی",
+                    "column_rect"
+                )
+            ],
+            [
+                button(
+                    "ستون گرد",
+                    "column_round"
+                )
+            ],
+            [
+                button(
+                    "🔙 بازگشت",
+                    "home"
+                )
+            ],
         ])
     )
 
-
-async def roofs_menu(update, context):
-
-    clear_state(context)
-
-    await update.callback_query.edit_message_text(
-        "🏠 سقف‌ها\n\n"
-        "نوع سقف را انتخاب کنید:",
-        reply_markup=InlineKeyboardMarkup([
-            [button("تیرچه یونولیتی", "roof_poly")],
-            [button("تیرچه سفالی", "roof_clay")],
-            [button("تیرچه دوبل", "roof_double")],
-            [button("کرومیت", "roof_kromit")],
-            [button("کامپوزیت", "roof_composite")],
-            [button("عرشه فولادی", "roof_deck")],
-            [button("دال بتنی", "roof_slab")],
-            [button("وافل", "roof_waffle")],
-            [button("🔙 بازگشت", "home")],
-        ])
-    )
-
-
-async def ties_menu(update, context):
-
-    clear_state(context)
-
-    await update.callback_query.edit_message_text(
-        "🔗 شناژ و کلاف\n\n"
-        "انتخاب کنید:",
-        reply_markup=InlineKeyboardMarkup([
-            [button("شناژ", "tie_beam")],
-            [button("کلاف", "tie_cowl")],
-            [button("🔙 بازگشت", "home")],
-        ])
-    )
-
-
-async def walls_menu(update, context):
-
-    clear_state(context)
-
-    await update.callback_query.edit_message_text(
-        "🧱 دیوارها\n\n"
-        "نوع دیوار را انتخاب کنید:",
-        reply_markup=InlineKeyboardMarkup([
-            [button("دیوار برشی", "wall_shear")],
-            [button("دیوار حائل", "wall_retaining")],
-            [button("🔙 بازگشت", "home")],
-        ])
-    )
-
-
-# =========================================================
-# COLUMN FUNCTIONS
-# =========================================================
 
 async def start_column_rect(update, context):
 
     fields = [
         ("count", "تعداد ستون"),
-        ("length", "طول ستون (m)"),
         ("width", "عرض ستون (m)"),
+        ("depth", "عمق ستون (m)"),
         ("height", "ارتفاع ستون (m)"),
         ("main_diameter", "قطر میلگرد اصلی (mm)"),
         ("main_count", "تعداد میلگرد اصلی"),
-        ("tie_diameter", "قطر خاموت (mm)"),
-        ("tie_spacing", "فاصله خاموت (mm)"),
+        ("stirrup_diameter", "قطر خاموت (mm)"),
+        ("stirrup_spacing", "فاصله خاموت (mm)"),
         ("cover", "کاور (mm)"),
     ]
 
@@ -1240,8 +1389,8 @@ async def start_column_rect(update, context):
 
         return column_rectangular(
             count=int(f["count"]),
-            length_m=f["length"],
             width_m=f["width"],
+            depth_m=f["depth"],
             height_m=f["height"],
             main_diameter_mm=int(
                 f["main_diameter"]
@@ -1249,18 +1398,20 @@ async def start_column_rect(update, context):
             main_count=int(
                 f["main_count"]
             ),
-            tie_diameter_mm=int(
-                f["tie_diameter"]
+            stirrup_diameter_mm=int(
+                f["stirrup_diameter"]
             ),
-            tie_spacing_mm=f["tie_spacing"],
+            stirrup_spacing_mm=f[
+                "stirrup_spacing"
+            ],
             cover_mm=f["cover"],
         )
 
     await start_generic(
         update,
         context,
-        "ستون مستطیلی",
-        "🏛️ ستون مربعی / مستطیلی",
+        "column_rect",
+        "ستون مربعی / مستطیلی",
         fields,
         calc,
         "columns"
@@ -1275,8 +1426,8 @@ async def start_column_round(update, context):
         ("height", "ارتفاع ستون (m)"),
         ("main_diameter", "قطر میلگرد اصلی (mm)"),
         ("main_count", "تعداد میلگرد اصلی"),
-        ("tie_diameter", "قطر خاموت (mm)"),
-        ("tie_spacing", "فاصله خاموت (mm)"),
+        ("stirrup_diameter", "قطر خاموت (mm)"),
+        ("stirrup_spacing", "فاصله خاموت (mm)"),
         ("cover", "کاور (mm)"),
     ]
 
@@ -1292,18 +1443,20 @@ async def start_column_round(update, context):
             main_count=int(
                 f["main_count"]
             ),
-            tie_diameter_mm=int(
-                f["tie_diameter"]
+            stirrup_diameter_mm=int(
+                f["stirrup_diameter"]
             ),
-            tie_spacing_mm=f["tie_spacing"],
+            stirrup_spacing_mm=f[
+                "stirrup_spacing"
+            ],
             cover_mm=f["cover"],
         )
 
     await start_generic(
         update,
         context,
+        "column_round",
         "ستون گرد",
-        "🏛️ ستون گرد",
         fields,
         calc,
         "columns"
@@ -1311,8 +1464,30 @@ async def start_column_round(update, context):
 
 
 # =========================================================
-# BEAM
+# BEAMS
 # =========================================================
+
+async def beams_menu(update, context):
+
+    clear_state(context)
+
+    await update.callback_query.edit_message_text(
+        "📐 <b>تیرها</b>\n\n"
+        "نوع تیر را انتخاب کنید:",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup([
+            [
+                button("تیر اصلی", "beam_main")
+            ],
+            [
+                button("تیر فرعی", "beam_secondary")
+            ],
+            [
+                button("🔙 بازگشت", "home")
+            ],
+        ])
+    )
+
 
 async def start_beam(update, context, beam_type):
 
@@ -1322,11 +1497,10 @@ async def start_beam(update, context, beam_type):
         ("width", "عرض تیر (m)"),
         ("height", "ارتفاع تیر (m)"),
         ("main_diameter", "قطر میلگرد اصلی (mm)"),
-        ("main_count", "تعداد میلگرد اصلی"),
-        ("top_diameter", "قطر میلگرد بالایی (mm)"),
-        ("top_count", "تعداد میلگرد بالایی"),
-        ("tie_diameter", "قطر خاموت (mm)"),
-        ("tie_spacing", "فاصله خاموت (mm)"),
+        ("bottom_count", "تعداد میلگرد پایین"),
+        ("top_count", "تعداد میلگرد بالا"),
+        ("stirrup_diameter", "قطر خاموت (mm)"),
+        ("stirrup_spacing", "فاصله خاموت (mm)"),
         ("cover", "کاور (mm)"),
     ]
 
@@ -1340,27 +1514,26 @@ async def start_beam(update, context, beam_type):
             main_diameter_mm=int(
                 f["main_diameter"]
             ),
-            main_count=int(
-                f["main_count"]
-            ),
-            top_diameter_mm=int(
-                f["top_diameter"]
-            ),
-            top_count=int(
+            main_top_count=int(
                 f["top_count"]
             ),
-            tie_diameter_mm=int(
-                f["tie_diameter"]
+            main_bottom_count=int(
+                f["bottom_count"]
             ),
-            tie_spacing_mm=f["tie_spacing"],
+            stirrup_diameter_mm=int(
+                f["stirrup_diameter"]
+            ),
+            stirrup_spacing_mm=f[
+                "stirrup_spacing"
+            ],
             cover_mm=f["cover"],
         )
 
     await start_generic(
         update,
         context,
-        beam_type,
-        f"📐 {beam_type}",
+        "beam",
+        f"تیر {beam_type}",
         fields,
         calc,
         "beams"
@@ -1368,8 +1541,48 @@ async def start_beam(update, context, beam_type):
 
 
 # =========================================================
-# ROOF
+# ROOFS
 # =========================================================
+
+async def roofs_menu(update, context):
+
+    clear_state(context)
+
+    await update.callback_query.edit_message_text(
+        "🏠 <b>سقف‌ها</b>\n\n"
+        "نوع سقف را انتخاب کنید:",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup([
+            [
+                button("تیرچه یونولیتی", "roof_poly")
+            ],
+            [
+                button("تیرچه سفالی", "roof_clay")
+            ],
+            [
+                button("تیرچه دوبل", "roof_double")
+            ],
+            [
+                button("کرومیت", "roof_kromit")
+            ],
+            [
+                button("کامپوزیت", "roof_composite")
+            ],
+            [
+                button("عرشه فولادی", "roof_deck")
+            ],
+            [
+                button("دال بتنی", "roof_slab")
+            ],
+            [
+                button("وافل", "roof_waffle")
+            ],
+            [
+                button("🔙 بازگشت", "home")
+            ],
+        ])
+    )
+
 
 async def start_roof(update, context, roof_type):
 
@@ -1381,16 +1594,18 @@ async def start_roof(update, context, roof_type):
     def calc(f):
 
         return roof_slab(
-            area_m2=f["area"],
             roof_type=roof_type,
-            rebar_kg_m2=f["rebar_kg_m2"],
+            area_m2=f["area"],
+            rebar_kg_per_m2=f[
+                "rebar_kg_m2"
+            ],
         )
 
     await start_generic(
         update,
         context,
+        "roof",
         roof_type,
-        f"🏠 {roof_type}",
         fields,
         calc,
         "roofs"
@@ -1398,15 +1613,15 @@ async def start_roof(update, context, roof_type):
 
 
 # =========================================================
-# STAIR
+# STAIRS
 # =========================================================
 
 async def start_stair(update, context):
 
     fields = [
         ("count", "تعداد راه‌پله"),
-        ("width", "عرض راه‌پله (m)"),
         ("length", "طول مسیر (m)"),
+        ("width", "عرض راه‌پله (m)"),
         ("thickness", "ضخامت دال (m)"),
         ("main_diameter", "قطر میلگرد اصلی (mm)"),
         ("main_spacing", "فاصله میلگرد اصلی (mm)"),
@@ -1419,13 +1634,15 @@ async def start_stair(update, context):
 
         return stair_slab(
             count=int(f["count"]),
-            width_m=f["width"],
             length_m=f["length"],
+            width_m=f["width"],
             thickness_m=f["thickness"],
             main_diameter_mm=int(
                 f["main_diameter"]
             ),
-            main_spacing_mm=f["main_spacing"],
+            main_spacing_mm=f[
+                "main_spacing"
+            ],
             distribution_diameter_mm=int(
                 f["distribution_diameter"]
             ),
@@ -1438,8 +1655,8 @@ async def start_stair(update, context):
     await start_generic(
         update,
         context,
+        "stair",
         "راه‌پله",
-        "🪜 راه‌پله",
         fields,
         calc,
         "home"
@@ -1447,8 +1664,30 @@ async def start_stair(update, context):
 
 
 # =========================================================
-# TIE BEAM
+# TIES
 # =========================================================
+
+async def ties_menu(update, context):
+
+    clear_state(context)
+
+    await update.callback_query.edit_message_text(
+        "🔗 <b>شناژ و کلاف</b>\n\n"
+        "انتخاب کنید:",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup([
+            [
+                button("شناژ", "tie_beam")
+            ],
+            [
+                button("کلاف", "tie_cowl")
+            ],
+            [
+                button("🔙 بازگشت", "home")
+            ],
+        ])
+    )
+
 
 async def start_tie(update, context, tie_type):
 
@@ -1459,8 +1698,8 @@ async def start_tie(update, context, tie_type):
         ("height", "ارتفاع (m)"),
         ("main_diameter", "قطر میلگرد طولی (mm)"),
         ("main_count", "تعداد میلگرد طولی"),
-        ("tie_diameter", "قطر خاموت (mm)"),
-        ("tie_spacing", "فاصله خاموت (mm)"),
+        ("stirrup_diameter", "قطر خاموت (mm)"),
+        ("stirrup_spacing", "فاصله خاموت (mm)"),
         ("cover", "کاور (mm)"),
     ]
 
@@ -1477,18 +1716,20 @@ async def start_tie(update, context, tie_type):
             main_count=int(
                 f["main_count"]
             ),
-            tie_diameter_mm=int(
-                f["tie_diameter"]
+            stirrup_diameter_mm=int(
+                f["stirrup_diameter"]
             ),
-            tie_spacing_mm=f["tie_spacing"],
+            stirrup_spacing_mm=f[
+                "stirrup_spacing"
+            ],
             cover_mm=f["cover"],
         )
 
     await start_generic(
         update,
         context,
+        "tie",
         tie_type,
-        f"🔗 {tie_type}",
         fields,
         calc,
         "ties"
@@ -1496,16 +1737,38 @@ async def start_tie(update, context, tie_type):
 
 
 # =========================================================
-# WALL
+# WALLS
 # =========================================================
+
+async def walls_menu(update, context):
+
+    clear_state(context)
+
+    await update.callback_query.edit_message_text(
+        "🧱 <b>دیوارها</b>\n\n"
+        "نوع دیوار را انتخاب کنید:",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup([
+            [
+                button("دیوار برشی", "wall_shear")
+            ],
+            [
+                button("دیوار حائل", "wall_retaining")
+            ],
+            [
+                button("🔙 بازگشت", "home")
+            ],
+        ])
+    )
+
 
 async def start_wall(update, context, wall_type):
 
     fields = [
         ("count", "تعداد دیوار"),
         ("length", "طول دیوار (m)"),
-        ("height", "ارتفاع دیوار (m)"),
         ("thickness", "ضخامت دیوار (m)"),
+        ("height", "ارتفاع دیوار (m)"),
         ("vertical_diameter", "قطر میلگرد قائم (mm)"),
         ("vertical_spacing", "فاصله میلگرد قائم (mm)"),
         ("horizontal_diameter", "قطر میلگرد افقی (mm)"),
@@ -1518,8 +1781,8 @@ async def start_wall(update, context, wall_type):
         return wall_concrete(
             count=int(f["count"]),
             length_m=f["length"],
-            height_m=f["height"],
             thickness_m=f["thickness"],
+            height_m=f["height"],
             vertical_diameter_mm=int(
                 f["vertical_diameter"]
             ),
@@ -1538,8 +1801,8 @@ async def start_wall(update, context, wall_type):
     await start_generic(
         update,
         context,
+        "wall",
         wall_type,
-        f"🧱 {wall_type}",
         fields,
         calc,
         "walls"
@@ -1555,11 +1818,14 @@ async def summary_menu(update, context):
     clear_state(context)
 
     await update.callback_query.edit_message_text(
-        "📊 خلاصه پروژه\n\n"
+        "📊 <b>خلاصه پروژه</b>\n\n"
         "این بخش در مرحله بعد به جمع کل "
-        "تمام اعضای پروژه متصل می‌شود.",
+        "اعضای پروژه متصل می‌شود.",
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup([
-            [button("🔙 بازگشت", "home")]
+            [
+                button("🔙 بازگشت", "home")
+            ]
         ])
     )
 
@@ -1569,10 +1835,13 @@ async def settings_menu(update, context):
     clear_state(context)
 
     await update.callback_query.edit_message_text(
-        "⚙️ تنظیمات\n\n"
+        "⚙️ <b>تنظیمات</b>\n\n"
         "تنظیمات پروژه در نسخه بعدی تکمیل می‌شود.",
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup([
-            [button("🔙 بازگشت", "home")]
+            [
+                button("🔙 بازگشت", "home")
+            ]
         ])
     )
 
@@ -1582,13 +1851,16 @@ async def help_menu(update, context):
     clear_state(context)
 
     await update.callback_query.edit_message_text(
-        "ℹ️ راهنما\n\n"
+        "ℹ️ <b>راهنما</b>\n\n"
         "این ربات برای برآورد اولیه مقادیر "
         "اسکلت بتنی طراحی شده است.\n\n"
-        "برای نتیجه دقیق‌تر باید ابعاد و جزئیات "
-        "واقعی نقشه وارد شوند.",
+        "برای نتیجه دقیق‌تر، ابعاد واقعی اعضا "
+        "و جزئیات میلگرد نقشه وارد شود.",
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup([
-            [button("🔙 بازگشت", "home")]
+            [
+                button("🔙 بازگشت", "home")
+            ]
         ])
     )
 
@@ -1619,10 +1891,20 @@ async def buttons(update, context):
         await start_isolated(update, context)
         return
 
-    if callback == "isolated_previous":
-        await isolated_previous(update, context)
+    if callback == "foundation_strip":
+        await start_strip(update, context)
         return
 
+    if callback == "foundation_raft":
+        await start_raft(update, context)
+        return
+
+    # WIZARD
+    if callback == "wizard_previous":
+        await wizard_previous(update, context)
+        return
+
+    # ISOLATED
     if callback == "isolated_rebar":
         await isolated_rebar(update, context)
         return
@@ -1631,17 +1913,21 @@ async def buttons(update, context):
         await isolated_cutlist(update, context)
         return
 
-    # GENERIC
-    if callback == "generic_previous":
-        await generic_previous(update, context)
+    if callback == "isolated_result":
+        await show_isolated_result(update, context)
         return
 
+    # GENERIC
     if callback == "generic_rebar":
         await generic_rebar(update, context)
         return
 
     if callback == "generic_cutlist":
         await generic_cutlist(update, context)
+        return
+
+    if callback == "generic_result":
+        await show_generic_result(update, context)
         return
 
     # COLUMNS
@@ -1666,7 +1952,7 @@ async def buttons(update, context):
         await start_beam(
             update,
             context,
-            "تیر اصلی"
+            "اصلی"
         )
         return
 
@@ -1674,7 +1960,7 @@ async def buttons(update, context):
         await start_beam(
             update,
             context,
-            "تیر فرعی"
+            "فرعی"
         )
         return
 
@@ -1683,71 +1969,28 @@ async def buttons(update, context):
         await roofs_menu(update, context)
         return
 
-    if callback == "roof_poly":
+    roof_callbacks = {
+        "roof_poly": "تیرچه یونولیتی",
+        "roof_clay": "تیرچه سفالی",
+        "roof_double": "تیرچه دوبل",
+        "roof_kromit": "کرومیت",
+        "roof_composite": "کامپوزیت",
+        "roof_deck": "عرشه فولادی",
+        "roof_slab": "دال بتنی",
+        "roof_waffle": "وافل",
+    }
+
+    if callback in roof_callbacks:
+
         await start_roof(
             update,
             context,
-            "تیرچه یونولیتی"
+            roof_callbacks[callback]
         )
+
         return
 
-    if callback == "roof_clay":
-        await start_roof(
-            update,
-            context,
-            "تیرچه سفالی"
-        )
-        return
-
-    if callback == "roof_double":
-        await start_roof(
-            update,
-            context,
-            "تیرچه دوبل"
-        )
-        return
-
-    if callback == "roof_kromit":
-        await start_roof(
-            update,
-            context,
-            "کرومیت"
-        )
-        return
-
-    if callback == "roof_composite":
-        await start_roof(
-            update,
-            context,
-            "کامپوزیت"
-        )
-        return
-
-    if callback == "roof_deck":
-        await start_roof(
-            update,
-            context,
-            "عرشه فولادی"
-        )
-        return
-
-    if callback == "roof_slab":
-        await start_roof(
-            update,
-            context,
-            "دال بتنی"
-        )
-        return
-
-    if callback == "roof_waffle":
-        await start_roof(
-            update,
-            context,
-            "وافل"
-        )
-        return
-
-    # STAIRS
+    # STAIR
     if callback == "stairs":
         await start_stair(update, context)
         return
@@ -1809,29 +2052,36 @@ async def buttons(update, context):
         await help_menu(update, context)
         return
 
-    # RESULT
-    if callback == "isolated_result":
-
-        await show_isolated_result(
-            update,
-            context
-        )
-
-        return
-
     await query.edit_message_text(
         "❌ گزینه نامعتبر است.",
         reply_markup=InlineKeyboardMarkup([
-            [button("🏠 خانه", "home")]
+            [
+                button("🏠 خانه", "home")
+            ]
         ])
     )
 
 
 # =========================================================
-# MESSAGE ROUTER
+# TEXT MESSAGE ROUTER
 # =========================================================
 
 async def receive(update, context):
+
+    text = update.message.text.strip()
+
+    # منوی پایین
+    if text == MENU_TEXT:
+
+        clear_state(context)
+
+        await update.message.reply_text(
+            HOME_TEXT,
+            parse_mode="HTML",
+            reply_markup=home_keyboard()
+        )
+
+        return
 
     data = context.user_data.get(
         "data",
@@ -1859,8 +2109,8 @@ async def receive(update, context):
         return
 
     await update.message.reply_text(
-        "لطفاً از منوی ربات استفاده کنید.",
-        reply_markup=home_keyboard()
+        "برای ادامه، از دکمه «☰ منو» استفاده کنید.",
+        reply_markup=bottom_menu()
     )
 
 
