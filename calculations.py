@@ -1,208 +1,179 @@
-# calculations.py
-# -*- coding: utf-8 -*-
-
 import math
 
 
-# =========================================================
-# CONSTANTS
-# =========================================================
+# ============================================================
+# Concrete Structure Quantity Engine
+# Standards:
+#   iran   -> Iranian Mبحث 9
+#   aci318 -> ACI 318
+#   ec2    -> Eurocode 2 / EN 1992-1-1
+#   china  -> GB/T 50010-2010 (2024)
+# ============================================================
 
-STOCK_BAR_LENGTH_M = 12.0
+
+# ------------------------------------------------------------
+# Rebar unit weights kg/m
+# ------------------------------------------------------------
 
 REBAR_WEIGHT = {
     6: 0.222,
     8: 0.395,
     10: 0.617,
     12: 0.888,
-    14: 1.210,
-    16: 1.580,
-    18: 2.000,
-    20: 2.470,
-    22: 2.980,
-    25: 3.850,
-    28: 4.830,
-    32: 6.310,
-    36: 7.990,
+    14: 1.21,
+    16: 1.58,
+    18: 2.00,
+    20: 2.47,
+    22: 2.98,
+    25: 3.85,
+    28: 4.83,
+    32: 6.31,
+    36: 7.99,
+    40: 9.87,
 }
 
 
-# =========================================================
-# STANDARD DEFINITIONS
-# =========================================================
+STOCK_BAR_LENGTH_M = 12.0
 
-STANDARD_IRAN = "iran"
-STANDARD_ACI = "aci318"
-STANDARD_EUROCODE = "eurocode2"
+
+# ------------------------------------------------------------
+# Standard definitions
+# ------------------------------------------------------------
+
+STANDARDS = {
+    "iran": {
+        "name": "مبحث ۹ ایران",
+        "code": "Mبحث ۹",
+        "default_cover_foundation_mm": 50,
+        "default_cover_member_mm": 40,
+    },
+
+    "aci318": {
+        "name": "ACI 318",
+        "code": "ACI 318",
+        "default_cover_foundation_mm": 50,
+        "default_cover_member_mm": 40,
+    },
+
+    "ec2": {
+        "name": "Eurocode 2",
+        "code": "EN 1992-1-1",
+        "default_cover_foundation_mm": 50,
+        "default_cover_member_mm": 30,
+    },
+
+    "china": {
+        "name": "China GB/T 50010",
+        "code": "GB/T 50010-2010 (2024)",
+        "default_cover_foundation_mm": 40,
+        "default_cover_member_mm": 20,
+    },
+}
+
+
+# ------------------------------------------------------------
+# Material settings
+# ------------------------------------------------------------
+
+DEFAULT_PROJECT = {
+    "standard": "iran",
+    "fc_mpa": 25.0,
+    "fy_mpa": 400.0,
+    "design_life_years": 50,
+    "environment": "normal",
+}
 
 
 def normalize_standard(standard):
-    """
-    Converts different names/codes to one internal value.
-    """
-
     if not standard:
-        return STANDARD_IRAN
+        return "iran"
 
     value = str(standard).strip().lower()
 
     aliases = {
-        "iran": STANDARD_IRAN,
-        "مبحث ۹": STANDARD_IRAN,
-        "مبحث9": STANDARD_IRAN,
-        "mبحث9": STANDARD_IRAN,
-        "nbci": STANDARD_IRAN,
+        "iran": "iran",
+        "iranian": "iran",
+        "mabhas9": "iran",
+        "مبحث ۹": "iran",
+        "مبحث9": "iran",
 
-        "aci": STANDARD_ACI,
-        "aci318": STANDARD_ACI,
-        "aci 318": STANDARD_ACI,
-        "aci-318": STANDARD_ACI,
+        "aci": "aci318",
+        "aci318": "aci318",
+        "aci 318": "aci318",
 
-        "eurocode": STANDARD_EUROCODE,
-        "eurocode2": STANDARD_EUROCODE,
-        "eurocode 2": STANDARD_EUROCODE,
-        "en1992": STANDARD_EUROCODE,
-        "en 1992-1-1": STANDARD_EUROCODE,
+        "ec2": "ec2",
+        "eurocode": "ec2",
+        "eurocode2": "ec2",
+        "eurocode 2": "ec2",
+
+        "china": "china",
+        "gb": "china",
+        "gb50010": "china",
+        "gb/t 50010": "china",
+        "gb/t50010": "china",
+        "chinese": "china",
+        "چین": "china",
     }
 
-    return aliases.get(value, STANDARD_IRAN)
+    return aliases.get(value, "iran")
 
 
-# =========================================================
-# PROJECT SETTINGS
-# =========================================================
+def get_standard_info(standard="iran"):
+    return STANDARDS.get(normalize_standard(standard), STANDARDS["iran"])
+
+
+# ------------------------------------------------------------
+# Material normalization
+# ------------------------------------------------------------
+
+def normalize_fc(fc_mpa):
+    try:
+        return float(fc_mpa)
+    except Exception:
+        return 25.0
+
+
+def normalize_fy(fy_mpa):
+    try:
+        return float(fy_mpa)
+    except Exception:
+        return 400.0
+
 
 def project_settings(
-    standard=STANDARD_IRAN,
-    concrete_strength_mpa=25,
-    rebar_grade="A3",
-    rebar_yield_mpa=None,
+    standard="iran",
+    fc_mpa=25,
+    fy_mpa=400,
+    design_life_years=50,
+    environment="normal",
 ):
-    """
-    Project-level settings.
-
-    These values should be entered once per project,
-    not repeatedly for every member.
-    """
-
-    standard = normalize_standard(standard)
-
-    fc = float(concrete_strength_mpa)
-
-    if fc <= 0:
-        raise ValueError(
-            "Concrete strength must be positive."
-        )
-
-    if rebar_yield_mpa is not None:
-        fy = float(rebar_yield_mpa)
-    else:
-        fy = rebar_grade_yield_mpa(
-            rebar_grade,
-            standard,
-        )
-
     return {
-        "standard": standard,
-        "concrete_strength_mpa": fc,
-        "rebar_grade": str(rebar_grade),
-        "rebar_yield_mpa": fy,
+        "standard": normalize_standard(standard),
+        "fc_mpa": normalize_fc(fc_mpa),
+        "fy_mpa": normalize_fy(fy_mpa),
+        "design_life_years": int(design_life_years),
+        "environment": str(environment or "normal"),
     }
 
 
-def rebar_grade_yield_mpa(
-    grade,
-    standard=STANDARD_IRAN,
-):
-    """
-    Project-level default yield strength.
-
-    The exact material designation should eventually
-    come from the selected material database.
-    """
-
-    standard = normalize_standard(standard)
-    value = str(grade).strip().upper()
-
-    # Iranian common designations
-    if standard == STANDARD_IRAN:
-
-        iran_values = {
-            "A1": 240.0,
-            "A2": 300.0,
-            "A3": 400.0,
-            "A4": 500.0,
-        }
-
-        return iran_values.get(
-            value,
-            400.0,
-        )
-
-    # Eurocode commonly uses steel grade B500
-    if standard == STANDARD_EUROCODE:
-
-        euro_values = {
-            "B400": 400.0,
-            "B500": 500.0,
-            "B500A": 500.0,
-            "B500B": 500.0,
-            "B500C": 500.0,
-        }
-
-        return euro_values.get(
-            value,
-            500.0,
-        )
-
-    # ACI commonly uses Grade 60
-    if standard == STANDARD_ACI:
-
-        aci_values = {
-            "GRADE40": 280.0,
-            "GRADE 40": 280.0,
-            "GRADE60": 420.0,
-            "GRADE 60": 420.0,
-            "60": 420.0,
-        }
-
-        return aci_values.get(
-            value,
-            420.0,
-        )
-
-    return 400.0
-
-
-# =========================================================
-# REBAR BASIC CALCULATIONS
-# =========================================================
-
-def rebar_unit_weight(diameter_mm):
-    d = float(diameter_mm)
-
-    if d <= 0:
-        return 0.0
-
-    if int(d) in REBAR_WEIGHT:
-        return REBAR_WEIGHT[int(d)]
-
-    return d * d / 162.0
-
+# ------------------------------------------------------------
+# Rebar basic functions
+# ------------------------------------------------------------
 
 def rebar_weight(length_m, diameter_mm):
-    return (
-        float(length_m)
-        * rebar_unit_weight(diameter_mm)
+    d = int(diameter_mm)
+
+    if length_m <= 0:
+        return 0.0
+
+    return float(length_m) * REBAR_WEIGHT.get(
+        d,
+        (d * d) / 162.0
     )
 
 
 def rebar_area_mm2(diameter_mm):
     d = float(diameter_mm)
-
-    if d <= 0:
-        return 0.0
-
     return math.pi * d * d / 4.0
 
 
@@ -210,459 +181,222 @@ def bars_12m(length_m):
     if length_m <= 0:
         return 0
 
-    return math.ceil(
-        float(length_m)
-        / STOCK_BAR_LENGTH_M
-    )
+    return math.ceil(length_m / STOCK_BAR_LENGTH_M)
 
 
-# =========================================================
-# COVER
-# =========================================================
+def number_of_bars_in_direction(usable_length_m, spacing_mm):
+    if usable_length_m <= 0 or spacing_mm <= 0:
+        return 0
 
-def default_cover_mm(
-    standard,
-    member_type,
-    exposure="normal",
-    cast_against_ground=False,
+    return math.floor(
+        usable_length_m / (spacing_mm / 1000.0)
+    ) + 1
+
+
+# ------------------------------------------------------------
+# Standard-aware concrete cover
+# ------------------------------------------------------------
+
+def required_cover_mm(
+    standard="iran",
+    member_type="member",
+    fc_mpa=25,
+    design_life_years=50,
+    environment="normal",
 ):
     """
-    Internal cover selector.
+    Returns an internal cover value.
 
     IMPORTANT:
-    This is an engineering input layer, not a replacement
-    for the complete project-specific durability/fire design.
+    This function is an engineering default layer for the quantity
+    calculator. Final project cover must follow the project drawings
+    and the applicable code/environment classification.
 
-    Ground-contact concrete is treated separately.
+    China:
+      GB/T 50010-2010 (2024)
+      - stressed reinforcement cover >= bar diameter
+      - 50-year table depends on environmental category
+      - foundation cover from top of blinding/cushion >= 40 mm
+      - if fc <= C25, table value increases by 5 mm
+
+    Because the bot UI does not ask the user for an environmental
+    category, conservative internal defaults are used here.
     """
 
-    standard = normalize_standard(
-        standard
-    )
+    standard = normalize_standard(standard)
+    member = str(member_type or "member").lower()
 
-    member = str(
-        member_type
-    ).strip().lower()
+    fc = normalize_fc(fc_mpa)
 
-    if cast_against_ground:
-        # Conservative construction-side default.
-        # Final project design must verify the exact code condition.
-        return 75.0
+    # --------------------------------------------------------
+    # CHINA
+    # --------------------------------------------------------
 
-    # Generic member categories.
-    # These values are intentionally kept as internal defaults
-    # and can be refined when exposure/fire conditions are collected.
-    if member in {
-        "footing",
+    if standard == "china":
+
+        # Foundation:
+        # GB/T 50010-2010 (2024), 8.2.1:
+        # cover from top of concrete cushion >= 40 mm.
+        if member in (
+            "foundation",
+            "footing",
+            "raft",
+            "strip_footing",
+            "pile_cap",
+        ):
+            cover = 40.0
+
+        # Normal building environment category I:
+        # slab/wall/shell = 15 mm
+        # beam/column/bar = 20 mm
+        elif member in (
+            "slab",
+            "wall",
+            "stair",
+            "roof",
+            "shell",
+        ):
+            cover = 15.0
+
+        else:
+            cover = 20.0
+
+        # Design life 100 years:
+        if int(design_life_years) >= 100:
+            cover *= 1.4
+
+        # C25 or lower -> +5 mm
+        if fc <= 25:
+            cover += 5.0
+
+        return max(cover, 10.0)
+
+    # --------------------------------------------------------
+    # EUROCODE 2
+    # --------------------------------------------------------
+
+    if standard == "ec2":
+
+        if member in (
+            "foundation",
+            "footing",
+            "raft",
+            "strip_footing",
+            "pile_cap",
+        ):
+            cover = 50.0
+
+        elif member in ("slab", "roof", "stair", "wall"):
+            cover = 25.0
+
+        else:
+            cover = 30.0
+
+        return cover
+
+    # --------------------------------------------------------
+    # ACI 318
+    # --------------------------------------------------------
+
+    if standard == "aci318":
+
+        if member in (
+            "foundation",
+            "footing",
+            "raft",
+            "strip_footing",
+            "pile_cap",
+        ):
+            cover = 50.0
+
+        elif member in ("slab", "wall", "roof", "stair"):
+            cover = 40.0
+
+        else:
+            cover = 40.0
+
+        return cover
+
+    # --------------------------------------------------------
+    # IRAN - Mبحث ۹
+    # --------------------------------------------------------
+
+    if member in (
         "foundation",
+        "footing",
         "raft",
         "strip_footing",
-    }:
+        "pile_cap",
+    ):
         return 50.0
-
-    if member in {
-        "column",
-        "column_rect",
-        "column_round",
-    }:
-        return 40.0
-
-    if member in {
-        "beam",
-        "tie",
-        "wall",
-        "stair",
-    }:
-        return 40.0
-
-    if member in {
-        "roof",
-        "slab",
-    }:
-        return 30.0
 
     return 40.0
 
 
 def usable_length(
     total_length_m,
-    cover_mm=50,
+    cover_mm=None,
+    standard="iran",
+    member_type="member",
+    fc_mpa=25,
+    design_life_years=50,
+    environment="normal",
 ):
-    total = float(total_length_m)
-    cover = float(cover_mm)
+    if cover_mm is None:
+        cover_mm = required_cover_mm(
+            standard=standard,
+            member_type=member_type,
+            fc_mpa=fc_mpa,
+            design_life_years=design_life_years,
+            environment=environment,
+        )
 
     return max(
-        total
-        - 2.0 * cover / 1000.0,
+        float(total_length_m) - 2.0 * float(cover_mm) / 1000.0,
         0.0,
     )
 
 
-# =========================================================
-# BAR COUNT
-# =========================================================
+# ------------------------------------------------------------
+# Legacy lap compatibility
+# ------------------------------------------------------------
 
-def number_of_bars_in_direction(
-    usable_length_m,
-    spacing_mm,
-):
-    usable = float(usable_length_m)
-    spacing = float(spacing_mm)
-
-    if usable <= 0 or spacing <= 0:
-        return 0
-
-    return (
-        math.floor(
-            usable
-            / (spacing / 1000.0)
-        )
-        + 1
-    )
-
-
-# =========================================================
-# DEVELOPMENT / SPLICE ENGINE
-# =========================================================
-
-def development_length(
-    standard,
-    diameter_mm,
-    concrete_strength_mpa,
-    rebar_yield_mpa,
-    member_type="beam",
-    tension=True,
-    bond_condition="good",
-):
+def bar_length_with_lap(length_m, lap_percent=0):
     """
-    Returns an engineering development-length estimate
-    using a standard-specific calculation path.
+    Backward-compatible helper.
 
-    IMPORTANT:
-    A final design check may require additional parameters:
-    bar position, confinement, coating, transverse reinforcement,
-    seismic detailing, member condition, etc.
+    The old calculator used a percentage lap.
+    The new standards engine does NOT use a fixed lap percentage.
 
-    Therefore this function exposes the assumptions explicitly.
+    Kept so older bot calls do not break.
     """
 
-    standard = normalize_standard(
-        standard
-    )
-
-    db = float(diameter_mm)
-    fc = float(concrete_strength_mpa)
-    fy = float(rebar_yield_mpa)
-
-    if db <= 0:
-        raise ValueError(
-            "Bar diameter must be positive."
-        )
-
-    if fc <= 0:
-        raise ValueError(
-            "Concrete strength must be positive."
-        )
-
-    if fy <= 0:
-        raise ValueError(
-            "Rebar yield strength must be positive."
-        )
-
-    # -----------------------------------------------------
-    # EUROCODE 2
-    # -----------------------------------------------------
-    #
-    # EC2 uses:
-    # l_bd = alpha factors × basic anchorage length
-    #
-    # Exact alpha factors depend on anchorage geometry,
-    # cover, confinement, bar position, etc.
-    #
-    # For a straight bar with good bond and normal conditions,
-    # use the EC2 basic relationship here.
-    #
-    # f_bd = 2.25 × eta1 × eta2 × f_ctd
-    #
-    # f_ctd = alpha_ct × f_ctk,0.05 / gamma_c
-    #
-    # For this calculation layer we use a transparent
-    # normal-condition approximation and expose the assumptions.
-    # -----------------------------------------------------
-
-    if standard == STANDARD_EUROCODE:
-
-        # Approximate fctm relationship for normal concrete
-        if fc <= 50:
-            fctm = 0.30 * (
-                fc ** (2.0 / 3.0)
-            )
-        else:
-            fctm = (
-                2.12
-                * math.log(
-                    1.0
-                    + fc / 10.0
-                )
-            )
-
-        fctk05 = 0.70 * fctm
-
-        gamma_c = 1.50
-
-        f_ctd = (
-            fctk05
-            / gamma_c
-        )
-
-        eta1 = 1.0 if bond_condition == "good" else 0.7
-
-        eta2 = min(
-            1.0,
-            (
-                132.0 - db
-            ) / 100.0,
-        )
-
-        f_bd = max(
-            2.25
-            * eta1
-            * eta2
-            * f_ctd,
-            0.001,
-        )
-
-        alpha_1 = 1.0
-        alpha_2 = 1.0
-        alpha_3 = 1.0
-        alpha_4 = 1.0
-        alpha_5 = 1.0
-
-        l_b_rqd = (
-            db
-            / 4.0
-            * fy
-            / f_bd
-        )
-
-        l_bd = (
-            alpha_1
-            * alpha_2
-            * alpha_3
-            * alpha_4
-            * alpha_5
-            * l_b_rqd
-        )
-
-        l_bd = max(
-            l_bd,
-            10.0 * db,
-        )
-
-        return l_bd / 1000.0
-
-    # -----------------------------------------------------
-    # IRAN / Mبحث 9
-    # -----------------------------------------------------
-    #
-    # The Iranian path is deliberately separated from ACI
-    # and Eurocode. The exact Chapter 21 parameters depend
-    # on bar/concrete/member/detailing conditions.
-    #
-    # We therefore calculate a transparent base development
-    # value and do not pretend that one fixed multiplier is
-    # the complete Mبحث 9 design check.
-    # -----------------------------------------------------
-
-    if standard == STANDARD_IRAN:
-
-        # Base bond-style calculation.
-        # This is an internal calculation layer.
-        #
-        # Final detailed implementation can add:
-        # Ktr, cover, confinement, top-bar factor,
-        # bar location and seismic conditions.
-
-        sqrt_fc = math.sqrt(
-            max(fc, 1.0)
-        )
-
-        base = (
-            fy
-            * db
-            / (
-                4.0
-                * sqrt_fc
-            )
-        )
-
-        # Minimum practical anchorage floor.
-        # The final project-specific Chapter 21 check
-        # should still be applied.
-        ld_mm = max(
-            base,
-            300.0,
-        )
-
-        return ld_mm / 1000.0
-
-    # -----------------------------------------------------
-    # ACI 318
-    # -----------------------------------------------------
-    #
-    # ACI 318-25 has dedicated development/splice provisions.
-    # A complete ACI calculation requires additional conditions
-    # such as bar location, coating, confinement and geometry.
-    #
-    # This path therefore calculates the base development
-    # requirement without silently inventing those missing
-    # modifiers.
-    # -----------------------------------------------------
-
-    if standard == STANDARD_ACI:
-
-        # SI-compatible base expression.
-        # Additional ACI modifiers are intentionally exposed
-        # rather than hidden in an arbitrary fixed percentage.
-
-        sqrt_fc = math.sqrt(
-            max(fc, 1.0)
-        )
-
-        base = (
-            fy
-            * db
-            / (
-                4.0
-                * sqrt_fc
-            )
-        )
-
-        ld_mm = max(
-            base,
-            300.0,
-        )
-
-        return ld_mm / 1000.0
-
-    return 0.0
-
-
-def splice_length(
-    standard,
-    diameter_mm,
-    concrete_strength_mpa,
-    rebar_yield_mpa,
-    member_type="beam",
-    tension=True,
-    bond_condition="good",
-):
-    """
-    Standard-specific lap-splice calculation.
-
-    This deliberately does NOT use:
-        length × 1.10
-        length × 1.15
-        or another arbitrary percentage.
-
-    The actual splice requirement depends on the selected
-    standard and detailing conditions.
-    """
-
-    ld = development_length(
-        standard=standard,
-        diameter_mm=diameter_mm,
-        concrete_strength_mpa=concrete_strength_mpa,
-        rebar_yield_mpa=rebar_yield_mpa,
-        member_type=member_type,
-        tension=tension,
-        bond_condition=bond_condition,
-    )
-
-    standard = normalize_standard(
-        standard
-    )
-
-    if standard == STANDARD_EUROCODE:
-        # EC2 lap length depends on the proportion of
-        # lapped bars and transverse reinforcement.
-        # For the base/default path we use the full
-        # development length.
-        return ld
-
-    if standard == STANDARD_IRAN:
-        return ld
-
-    if standard == STANDARD_ACI:
-        return ld
-
-    return ld
-
-
-def piece_length_with_splice(
-    base_length_m,
-    standard,
-    diameter_mm,
-    concrete_strength_mpa,
-    rebar_yield_mpa,
-    member_type="beam",
-):
-    """
-    Adds only the calculated splice/anchorage allowance
-    when a bar piece actually needs a splice.
-
-    For a continuous single piece, the base length is retained.
-    """
-
-    base = float(base_length_m)
-
-    if base <= 0:
+    if length_m <= 0:
         return 0.0
 
-    splice = splice_length(
-        standard=standard,
-        diameter_mm=diameter_mm,
-        concrete_strength_mpa=concrete_strength_mpa,
-        rebar_yield_mpa=rebar_yield_mpa,
-        member_type=member_type,
+    return float(length_m)
+
+
+# ------------------------------------------------------------
+# 12m stock optimization
+# ------------------------------------------------------------
+
+def optimize_12m_bars(piece_lengths):
+    clean = sorted(
+        [
+            float(x)
+            for x in piece_lengths
+            if x is not None and float(x) > 0
+        ],
+        reverse=True,
     )
 
-    # This function represents one required development/
-    # splice allowance. The calling member determines whether
-    # an actual splice is necessary.
-    return base + splice
-
-
-# =========================================================
-# 12 m CUTTING
-# =========================================================
-
-def optimize_12m_bars(
-    piece_lengths,
-):
-    clean = []
-
-    for value in piece_lengths:
-
-        if value is None:
-            continue
-
-        value = float(value)
-
-        if value <= 0:
-            continue
-
-        if value > STOCK_BAR_LENGTH_M + 0.000001:
+    for x in clean:
+        if x > STOCK_BAR_LENGTH_M + 0.000001:
             raise ValueError(
-                f"Bar piece length {value:.2f} m "
-                f"is longer than 12 m."
+                f"Bar piece length {x:.2f} m is longer than "
+                f"{STOCK_BAR_LENGTH_M:.0f} m."
             )
-
-        clean.append(value)
-
-    clean.sort(
-        reverse=True
-    )
 
     bars = []
 
@@ -673,23 +407,14 @@ def optimize_12m_bars(
         for bar in bars:
 
             if (
-                bar["used_m"]
-                + piece
-                <= STOCK_BAR_LENGTH_M
-                + 0.000001
+                bar["used_m"] + piece
+                <= STOCK_BAR_LENGTH_M + 0.000001
             ):
-
-                bar["pieces"].append(
-                    piece
-                )
-
+                bar["pieces"].append(piece)
                 bar["used_m"] += piece
-
                 bar["waste_m"] = (
-                    STOCK_BAR_LENGTH_M
-                    - bar["used_m"]
+                    STOCK_BAR_LENGTH_M - bar["used_m"]
                 )
-
                 placed = True
                 break
 
@@ -699,87 +424,53 @@ def optimize_12m_bars(
                 {
                     "pieces": [piece],
                     "used_m": piece,
-                    "waste_m":
-                        STOCK_BAR_LENGTH_M
-                        - piece,
+                    "waste_m": STOCK_BAR_LENGTH_M - piece,
                 }
             )
 
     return {
         "stock_bars": len(bars),
-
         "waste_m": sum(
-            STOCK_BAR_LENGTH_M
-            - float(x["used_m"])
+            x["waste_m"]
             for x in bars
         ),
-
         "plans": bars,
     }
 
 
-# =========================================================
-# REBAR DETAIL
-# =========================================================
+# ------------------------------------------------------------
+# Rebar detail
+# ------------------------------------------------------------
 
 def make_rebar_detail(
     diameter_mm,
     piece_lengths,
     description="",
+    lap_percent=0,
 ):
     pieces = [
         float(x)
         for x in piece_lengths
-        if x is not None
-        and float(x) > 0
+        if x is not None and float(x) > 0
     ]
 
-    optimization = optimize_12m_bars(
-        pieces
-    )
+    opt = optimize_12m_bars(pieces)
 
-    total_length = sum(
-        pieces
-    )
+    total = sum(pieces)
 
     return {
-        "diameter_mm":
-            int(diameter_mm),
-
-        "length_m":
-            total_length,
-
-        "weight_kg":
-            rebar_weight(
-                total_length,
-                diameter_mm,
-            ),
-
-        "bars_12m":
-            optimization[
-                "stock_bars"
-            ],
-
-        "piece_count":
-            len(pieces),
-
-        "piece_lengths_m":
-            pieces,
-
-        "waste_m":
-            sum(
-                STOCK_BAR_LENGTH_M
-                - float(x["used_m"])
-                for x in optimization[
-                    "plans"
-                ]
-            ),
-
-        "cut_plan":
-            optimization["plans"],
-
-        "description":
-            description,
+        "diameter_mm": int(diameter_mm),
+        "length_m": total,
+        "weight_kg": rebar_weight(
+            total,
+            diameter_mm,
+        ),
+        "bars_12m": opt["stock_bars"],
+        "piece_count": len(pieces),
+        "piece_lengths_m": pieces,
+        "waste_m": opt["waste_m"],
+        "cut_plan": opt["plans"],
+        "description": description,
     }
 
 
@@ -788,171 +479,102 @@ def add_rebar_detail(
     diameter_mm,
     piece_lengths,
     description="",
+    lap_percent=0,
 ):
-    if not piece_lengths:
-        return
-
-    details.append(
-        make_rebar_detail(
-            diameter_mm,
-            piece_lengths,
-            description,
+    if piece_lengths:
+        details.append(
+            make_rebar_detail(
+                diameter_mm,
+                piece_lengths,
+                description,
+                lap_percent,
+            )
         )
-    )
 
 
-def finalize_rebar_details(
-    details,
-):
+def finalize_rebar_details(details):
     grouped = {}
     descriptions = {}
 
-    for detail in details:
+    for d in details:
 
-        diameter = int(
-            detail["diameter_mm"]
+        dia = int(d["diameter_mm"])
+
+        grouped.setdefault(dia, []).extend(
+            d.get("piece_lengths_m", [])
         )
 
-        grouped.setdefault(
-            diameter,
-            [],
-        ).extend(
-            detail.get(
-                "piece_lengths_m",
-                [],
-            )
-        )
-
-        description = detail.get(
-            "description",
-            "",
-        )
+        description = d.get("description")
 
         if description:
-
             descriptions.setdefault(
-                diameter,
-                [],
+                dia,
+                []
             )
 
-            if description not in descriptions[
-                diameter
-            ]:
-
-                descriptions[
-                    diameter
-                ].append(
+            if description not in descriptions[dia]:
+                descriptions[dia].append(
                     description
                 )
 
-    output = []
+    out = []
 
-    for diameter in sorted(
-        grouped
-    ):
+    for dia in sorted(grouped):
 
-        pieces = grouped[
-            diameter
-        ]
+        pieces = grouped[dia]
 
-        optimization = optimize_12m_bars(
-            pieces
-        )
+        opt = optimize_12m_bars(pieces)
 
-        total_length = sum(
-            pieces
-        )
+        total = sum(pieces)
 
-        output.append(
+        out.append(
             {
-                "diameter_mm":
-                    diameter,
-
-                "length_m":
-                    total_length,
-
-                "weight_kg":
-                    rebar_weight(
-                        total_length,
-                        diameter,
-                    ),
-
-                "bars_12m":
-                    optimization[
-                        "stock_bars"
-                    ],
-
-                "piece_count":
-                    len(pieces),
-
-                "piece_lengths_m":
-                    pieces,
-
-                "waste_m":
-                    sum(
-                        STOCK_BAR_LENGTH_M
-                        - float(
-                            x["used_m"]
-                        )
-                        for x in optimization[
-                            "plans"
-                        ]
-                    ),
-
-                "cut_plan":
-                    optimization[
-                        "plans"
-                    ],
-
-                "description":
-                    " + ".join(
-                        descriptions.get(
-                            diameter,
-                            [],
-                        )
-                    ),
+                "diameter_mm": dia,
+                "length_m": total,
+                "weight_kg": rebar_weight(
+                    total,
+                    dia,
+                ),
+                "bars_12m": opt["stock_bars"],
+                "piece_count": len(pieces),
+                "piece_lengths_m": pieces,
+                "waste_m": opt["waste_m"],
+                "cut_plan": opt["plans"],
+                "description": " + ".join(
+                    descriptions.get(dia, [])
+                ),
             }
         )
 
-    return output
+    return out
 
 
-# =========================================================
-# RESULT
-# =========================================================
+# ------------------------------------------------------------
+# Member result
+# ------------------------------------------------------------
 
 def _member_result(
     concrete,
     details,
     **extra,
 ):
-    final = finalize_rebar_details(
-        details
-    )
+    final = finalize_rebar_details(details)
 
     return {
-        "concrete_m3":
-            float(concrete),
-
-        "total_concrete_m3":
-            float(concrete),
-
-        "total_rebar_kg":
-            sum(
-                x["weight_kg"]
-                for x in final
-            ),
-
-        "rebar_details":
-            final,
-
+        "concrete_m3": concrete,
+        "total_concrete_m3": concrete,
+        "total_rebar_kg": sum(
+            x["weight_kg"]
+            for x in final
+        ),
+        "rebar_details": final,
         **extra,
     }
 
 
-# =========================================================
-# FOUNDATION
-# =========================================================
+# ------------------------------------------------------------
+# Isolated footing
+# ------------------------------------------------------------
 
 def isolated_footing(
     count,
@@ -966,16 +588,27 @@ def isolated_footing(
     bottom_spacing_mm,
     top_diameter_mm=None,
     top_spacing_mm=None,
-    cover_mm=50,
+    cover_mm=None,
     lap_percent=0,
     pedestal_length_m=0,
     pedestal_width_m=0,
     pedestal_height_m=0,
-    standard=STANDARD_IRAN,
-    concrete_strength_mpa=25,
-    rebar_yield_mpa=400,
+    standard="iran",
+    fc_mpa=25,
+    fy_mpa=400,
+    design_life_years=50,
+    environment="normal",
 ):
     count = int(count)
+
+    if cover_mm is None:
+        cover_mm = required_cover_mm(
+            standard,
+            "foundation",
+            fc_mpa,
+            design_life_years,
+            environment,
+        )
 
     lean = (
         count
@@ -1000,13 +633,6 @@ def isolated_footing(
 
     details = []
 
-    if cover_mm is None:
-        cover_mm = default_cover_mm(
-            standard,
-            "footing",
-            cast_against_ground=True,
-        )
-
     L = usable_length(
         length_m,
         cover_mm,
@@ -1030,18 +656,14 @@ def isolated_footing(
     add_rebar_detail(
         details,
         bottom_diameter_mm,
-        [L] * (
-            nx * count
-        ),
+        [L] * (nx * count),
         "پی منفرد - شبکه پایین X",
     )
 
     add_rebar_detail(
         details,
         bottom_diameter_mm,
-        [W] * (
-            ny * count
-        ),
+        [W] * (ny * count),
         "پی منفرد - شبکه پایین Y",
     )
 
@@ -1051,7 +673,6 @@ def isolated_footing(
         and top_diameter_mm > 0
         and top_spacing_mm > 0
     ):
-
         nx = number_of_bars_in_direction(
             W,
             top_spacing_mm,
@@ -1065,68 +686,43 @@ def isolated_footing(
         add_rebar_detail(
             details,
             top_diameter_mm,
-            [L] * (
-                nx * count
-            ),
+            [L] * (nx * count),
             "پی منفرد - شبکه بالا X",
         )
 
         add_rebar_detail(
             details,
             top_diameter_mm,
-            [W] * (
-                ny * count
-            ),
+            [W] * (ny * count),
             "پی منفرد - شبکه بالا Y",
         )
 
-    final = finalize_rebar_details(
-        details
+    final = finalize_rebar_details(details)
+
+    total_rebar = sum(
+        x["weight_kg"]
+        for x in final
     )
 
     return {
-        "lean_concrete_m3":
-            lean,
-
-        "footing_concrete_m3":
-            footing,
-
-        "pedestal_concrete_m3":
-            pedestal,
-
-        "total_concrete_m3":
-            lean
-            + footing
-            + pedestal,
-
-        "bottom_rebar_weight_kg":
-            sum(
-                x["weight_kg"]
-                for x in final
-            ),
-
-        "top_rebar_weight_kg":
-            0,
-
-        "total_rebar_kg":
-            sum(
-                x["weight_kg"]
-                for x in final
-            ),
-
-        "rebar_details":
-            final,
-
-        "standard":
-            normalize_standard(
-                standard
-            ),
+        "lean_concrete_m3": lean,
+        "footing_concrete_m3": footing,
+        "pedestal_concrete_m3": pedestal,
+        "total_concrete_m3": (
+            lean + footing + pedestal
+        ),
+        "bottom_rebar_weight_kg": total_rebar,
+        "top_rebar_weight_kg": 0,
+        "total_rebar_kg": total_rebar,
+        "rebar_details": final,
+        "cover_mm": cover_mm,
+        "standard": normalize_standard(standard),
     }
 
 
-# =========================================================
-# STRIP FOOTING
-# =========================================================
+# ------------------------------------------------------------
+# Strip footing
+# ------------------------------------------------------------
 
 def strip_footing(
     strip_count,
@@ -1144,13 +740,24 @@ def strip_footing(
     top_longitudinal_count=None,
     top_transverse_diameter_mm=None,
     top_transverse_spacing_mm=None,
-    cover_mm=50,
+    cover_mm=None,
     lap_percent=0,
-    standard=STANDARD_IRAN,
-    concrete_strength_mpa=25,
-    rebar_yield_mpa=400,
+    standard="iran",
+    fc_mpa=25,
+    fy_mpa=400,
+    design_life_years=50,
+    environment="normal",
 ):
     n = int(strip_count)
+
+    if cover_mm is None:
+        cover_mm = required_cover_mm(
+            standard,
+            "foundation",
+            fc_mpa,
+            design_life_years,
+            environment,
+        )
 
     concrete = (
         n
@@ -1158,13 +765,6 @@ def strip_footing(
         * footing_width_m
         * footing_thickness_m
     )
-
-    if cover_mm is None:
-        cover_mm = default_cover_mm(
-            standard,
-            "strip_footing",
-            cast_against_ground=True,
-        )
 
     details = []
 
@@ -1182,8 +782,7 @@ def strip_footing(
         details,
         longitudinal_diameter_mm,
         [L] * (
-            int(longitudinal_count)
-            * n
+            int(longitudinal_count) * n
         ),
         "پی نواری - طولی پایین",
     )
@@ -1196,9 +795,7 @@ def strip_footing(
     add_rebar_detail(
         details,
         transverse_diameter_mm,
-        [W] * (
-            nc * n
-        ),
+        [W] * (nc * n),
         "پی نواری - عرضی پایین",
     )
 
@@ -1206,15 +803,11 @@ def strip_footing(
         top_longitudinal_diameter_mm
         and top_longitudinal_count
     ):
-
         add_rebar_detail(
             details,
             top_longitudinal_diameter_mm,
             [L] * (
-                int(
-                    top_longitudinal_count
-                )
-                * n
+                int(top_longitudinal_count) * n
             ),
             "پی نواری - طولی بالا",
         )
@@ -1223,7 +816,6 @@ def strip_footing(
         top_transverse_diameter_mm
         and top_transverse_spacing_mm
     ):
-
         nc = number_of_bars_in_direction(
             L,
             top_transverse_spacing_mm,
@@ -1232,9 +824,7 @@ def strip_footing(
         add_rebar_detail(
             details,
             top_transverse_diameter_mm,
-            [W] * (
-                nc * n
-            ),
+            [W] * (nc * n),
             "پی نواری - عرضی بالا",
         )
 
@@ -1242,15 +832,14 @@ def strip_footing(
         concrete,
         details,
         count=n,
-        standard=normalize_standard(
-            standard
-        ),
+        cover_mm=cover_mm,
+        standard=normalize_standard(standard),
     )
 
 
-# =========================================================
-# RAFT
-# =========================================================
+# ------------------------------------------------------------
+# Raft foundation
+# ------------------------------------------------------------
 
 def raft_foundation(
     length_m,
@@ -1267,24 +856,28 @@ def raft_foundation(
     top_x_spacing_mm=None,
     top_y_diameter_mm=None,
     top_y_spacing_mm=None,
-    cover_mm=50,
+    cover_mm=None,
     lap_percent=0,
-    standard=STANDARD_IRAN,
-    concrete_strength_mpa=25,
-    rebar_yield_mpa=400,
+    standard="iran",
+    fc_mpa=25,
+    fy_mpa=400,
+    design_life_years=50,
+    environment="normal",
 ):
+    if cover_mm is None:
+        cover_mm = required_cover_mm(
+            standard,
+            "foundation",
+            fc_mpa,
+            design_life_years,
+            environment,
+        )
+
     concrete = (
         length_m
         * width_m
         * thickness_m
     )
-
-    if cover_mm is None:
-        cover_mm = default_cover_mm(
-            standard,
-            "raft",
-            cast_against_ground=True,
-        )
 
     details = []
 
@@ -1326,7 +919,6 @@ def raft_foundation(
         top_x_diameter_mm
         and top_x_spacing_mm
     ):
-
         nx = number_of_bars_in_direction(
             W,
             top_x_spacing_mm,
@@ -1343,7 +935,6 @@ def raft_foundation(
         top_y_diameter_mm
         and top_y_spacing_mm
     ):
-
         ny = number_of_bars_in_direction(
             L,
             top_y_spacing_mm,
@@ -1359,15 +950,14 @@ def raft_foundation(
     return _member_result(
         concrete,
         details,
-        standard=normalize_standard(
-            standard
-        ),
+        cover_mm=cover_mm,
+        standard=normalize_standard(standard),
     )
 
 
-# =========================================================
-# COLUMNS
-# =========================================================
+# ------------------------------------------------------------
+# Rectangular column
+# ------------------------------------------------------------
 
 def column_rectangular(
     count,
@@ -1378,17 +968,22 @@ def column_rectangular(
     long_count,
     stirrup_dia,
     stirrup_spacing,
-    cover_mm=40,
-    standard=STANDARD_IRAN,
-    concrete_strength_mpa=25,
-    rebar_yield_mpa=400,
+    cover_mm=None,
+    standard="iran",
+    fc_mpa=25,
+    fy_mpa=400,
+    design_life_years=50,
+    environment="normal",
 ):
     n = int(count)
 
     if cover_mm is None:
-        cover_mm = default_cover_mm(
+        cover_mm = required_cover_mm(
             standard,
-            "column_rect",
+            "column",
+            fc_mpa,
+            design_life_years,
+            environment,
         )
 
     concrete = (
@@ -1410,49 +1005,40 @@ def column_rectangular(
         details,
         long_dia,
         [L] * (
-            int(long_count)
-            * n
+            int(long_count) * n
         ),
         "ستون - میلگرد طولی",
     )
 
-    stirrup_count = max(
+    sc = max(
         1,
         math.floor(
             L
-            / (
-                stirrup_spacing
-                / 1000.0
-            )
+            / (stirrup_spacing / 1000.0)
+        ) + 1,
+    )
+
+    stirrup_len = 2 * (
+        (
+            width_m
+            - 2 * cover_mm / 1000.0
         )
-        + 1,
+        +
+        (
+            depth_m
+            - 2 * cover_mm / 1000.0
+        )
     )
 
-    stirrup_width = max(
-        width_m
-        - 2 * cover_mm / 1000.0,
+    stirrup_len = max(
+        stirrup_len,
         0,
-    )
-
-    stirrup_depth = max(
-        depth_m
-        - 2 * cover_mm / 1000.0,
-        0,
-    )
-
-    stirrup_length = 2 * (
-        stirrup_width
-        + stirrup_depth
     )
 
     add_rebar_detail(
         details,
         stirrup_dia,
-        [stirrup_length]
-        * (
-            stirrup_count
-            * n
-        ),
+        [stirrup_len] * (sc * n),
         "ستون - خاموت",
     )
 
@@ -1460,11 +1046,14 @@ def column_rectangular(
         concrete,
         details,
         count=n,
-        standard=normalize_standard(
-            standard
-        ),
+        cover_mm=cover_mm,
+        standard=normalize_standard(standard),
     )
 
+
+# ------------------------------------------------------------
+# Round column
+# ------------------------------------------------------------
 
 def column_round(
     count,
@@ -1474,23 +1063,28 @@ def column_round(
     long_count,
     stirrup_dia,
     stirrup_spacing,
-    cover_mm=40,
-    standard=STANDARD_IRAN,
-    concrete_strength_mpa=25,
-    rebar_yield_mpa=400,
+    cover_mm=None,
+    standard="iran",
+    fc_mpa=25,
+    fy_mpa=400,
+    design_life_years=50,
+    environment="normal",
 ):
     n = int(count)
 
     if cover_mm is None:
-        cover_mm = default_cover_mm(
+        cover_mm = required_cover_mm(
             standard,
-            "column_round",
+            "column",
+            fc_mpa,
+            design_life_years,
+            environment,
         )
 
     concrete = (
         n
         * math.pi
-        * diameter_m ** 2
+        * (diameter_m ** 2)
         / 4.0
         * height_m
     )
@@ -1507,43 +1101,32 @@ def column_round(
         details,
         long_dia,
         [L] * (
-            int(long_count)
-            * n
+            int(long_count) * n
         ),
         "ستون گرد - میلگرد طولی",
     )
 
-    stirrup_count = max(
+    sc = max(
         1,
         math.floor(
             L
-            / (
-                stirrup_spacing
-                / 1000.0
-            )
-        )
-        + 1,
+            / (stirrup_spacing / 1000.0)
+        ) + 1,
     )
 
-    ring_diameter = max(
-        diameter_m
-        - 2 * cover_mm / 1000.0,
-        0,
-    )
-
-    ring_length = (
+    ring = (
         math.pi
-        * ring_diameter
+        * max(
+            diameter_m
+            - 2 * cover_mm / 1000.0,
+            0,
+        )
     )
 
     add_rebar_detail(
         details,
         stirrup_dia,
-        [ring_length]
-        * (
-            stirrup_count
-            * n
-        ),
+        [ring] * (sc * n),
         "ستون گرد - خاموت حلقوی",
     )
 
@@ -1551,15 +1134,14 @@ def column_round(
         concrete,
         details,
         count=n,
-        standard=normalize_standard(
-            standard
-        ),
+        cover_mm=cover_mm,
+        standard=normalize_standard(standard),
     )
 
 
-# =========================================================
-# BEAM
-# =========================================================
+# ------------------------------------------------------------
+# Beam
+# ------------------------------------------------------------
 
 def beam(
     count,
@@ -1572,17 +1154,22 @@ def beam(
     top_count,
     stirrup_dia,
     stirrup_spacing,
-    cover_mm=40,
-    standard=STANDARD_IRAN,
-    concrete_strength_mpa=25,
-    rebar_yield_mpa=400,
+    cover_mm=None,
+    standard="iran",
+    fc_mpa=25,
+    fy_mpa=400,
+    design_life_years=50,
+    environment="normal",
 ):
     n = int(count)
 
     if cover_mm is None:
-        cover_mm = default_cover_mm(
+        cover_mm = required_cover_mm(
             standard,
             "beam",
+            fc_mpa,
+            design_life_years,
+            environment,
         )
 
     concrete = (
@@ -1604,8 +1191,7 @@ def beam(
         details,
         long_dia,
         [L] * (
-            int(bottom_count)
-            * n
+            int(bottom_count) * n
         ),
         "تیر - میلگرد طولی پایین",
     )
@@ -1614,49 +1200,40 @@ def beam(
         details,
         top_dia,
         [L] * (
-            int(top_count)
-            * n
+            int(top_count) * n
         ),
         "تیر - میلگرد طولی بالا",
     )
 
-    stirrup_count = max(
+    sc = max(
         1,
         math.floor(
             L
-            / (
-                stirrup_spacing
-                / 1000.0
-            )
+            / (stirrup_spacing / 1000.0)
+        ) + 1,
+    )
+
+    stirrup_len = 2 * (
+        (
+            width_m
+            - 2 * cover_mm / 1000.0
         )
-        + 1,
+        +
+        (
+            height_m
+            - 2 * cover_mm / 1000.0
+        )
     )
 
-    stirrup_width = max(
-        width_m
-        - 2 * cover_mm / 1000.0,
+    stirrup_len = max(
+        stirrup_len,
         0,
-    )
-
-    stirrup_height = max(
-        height_m
-        - 2 * cover_mm / 1000.0,
-        0,
-    )
-
-    stirrup_length = 2 * (
-        stirrup_width
-        + stirrup_height
     )
 
     add_rebar_detail(
         details,
         stirrup_dia,
-        [stirrup_length]
-        * (
-            stirrup_count
-            * n
-        ),
+        [stirrup_len] * (sc * n),
         "تیر - خاموت",
     )
 
@@ -1664,15 +1241,14 @@ def beam(
         concrete,
         details,
         count=n,
-        standard=normalize_standard(
-            standard
-        ),
+        cover_mm=cover_mm,
+        standard=normalize_standard(standard),
     )
 
 
-# =========================================================
-# TIE BEAM
-# =========================================================
+# ------------------------------------------------------------
+# Tie beam / tie
+# ------------------------------------------------------------
 
 def tie_beam(
     count,
@@ -1683,17 +1259,22 @@ def tie_beam(
     long_count,
     stirrup_dia,
     stirrup_spacing,
-    cover_mm=40,
-    standard=STANDARD_IRAN,
-    concrete_strength_mpa=25,
-    rebar_yield_mpa=400,
+    cover_mm=None,
+    standard="iran",
+    fc_mpa=25,
+    fy_mpa=400,
+    design_life_years=50,
+    environment="normal",
 ):
     n = int(count)
 
     if cover_mm is None:
-        cover_mm = default_cover_mm(
+        cover_mm = required_cover_mm(
             standard,
-            "tie",
+            "beam",
+            fc_mpa,
+            design_life_years,
+            environment,
         )
 
     concrete = (
@@ -1715,49 +1296,35 @@ def tie_beam(
         details,
         long_dia,
         [L] * (
-            int(long_count)
-            * n
+            int(long_count) * n
         ),
         "شناژ/کلاف - طولی",
     )
 
-    stirrup_count = max(
+    sc = max(
         1,
         math.floor(
             L
-            / (
-                stirrup_spacing
-                / 1000.0
-            )
+            / (stirrup_spacing / 1000.0)
+        ) + 1,
+    )
+
+    stirrup_len = 2 * (
+        (
+            width_m
+            - 2 * cover_mm / 1000.0
         )
-        + 1,
-    )
-
-    stirrup_width = max(
-        width_m
-        - 2 * cover_mm / 1000.0,
-        0,
-    )
-
-    stirrup_height = max(
-        height_m
-        - 2 * cover_mm / 1000.0,
-        0,
-    )
-
-    stirrup_length = 2 * (
-        stirrup_width
-        + stirrup_height
+        +
+        (
+            height_m
+            - 2 * cover_mm / 1000.0
+        )
     )
 
     add_rebar_detail(
         details,
         stirrup_dia,
-        [stirrup_length]
-        * (
-            stirrup_count
-            * n
-        ),
+        [max(stirrup_len, 0)] * (sc * n),
         "شناژ/کلاف - خاموت",
     )
 
@@ -1765,15 +1332,14 @@ def tie_beam(
         concrete,
         details,
         count=n,
-        standard=normalize_standard(
-            standard
-        ),
+        cover_mm=cover_mm,
+        standard=normalize_standard(standard),
     )
 
 
-# =========================================================
-# WALL
-# =========================================================
+# ------------------------------------------------------------
+# Wall
+# ------------------------------------------------------------
 
 def wall_concrete(
     length_m,
@@ -1783,15 +1349,20 @@ def wall_concrete(
     vertical_spacing,
     horizontal_dia,
     horizontal_spacing,
-    cover_mm=40,
-    standard=STANDARD_IRAN,
-    concrete_strength_mpa=25,
-    rebar_yield_mpa=400,
+    cover_mm=None,
+    standard="iran",
+    fc_mpa=25,
+    fy_mpa=400,
+    design_life_years=50,
+    environment="normal",
 ):
     if cover_mm is None:
-        cover_mm = default_cover_mm(
+        cover_mm = required_cover_mm(
             standard,
             "wall",
+            fc_mpa,
+            design_life_years,
+            environment,
         )
 
     concrete = (
@@ -1814,12 +1385,12 @@ def wall_concrete(
         0,
     )
 
-    vertical_count = number_of_bars_in_direction(
+    nv = number_of_bars_in_direction(
         W,
         vertical_spacing,
     )
 
-    horizontal_count = number_of_bars_in_direction(
+    nh = number_of_bars_in_direction(
         L,
         horizontal_spacing,
     )
@@ -1827,29 +1398,28 @@ def wall_concrete(
     add_rebar_detail(
         details,
         vertical_dia,
-        [L] * vertical_count,
+        [L] * nv,
         "دیوار - میلگرد قائم",
     )
 
     add_rebar_detail(
         details,
         horizontal_dia,
-        [W] * horizontal_count,
+        [W] * nh,
         "دیوار - میلگرد افقی",
     )
 
     return _member_result(
         concrete,
         details,
-        standard=normalize_standard(
-            standard
-        ),
+        cover_mm=cover_mm,
+        standard=normalize_standard(standard),
     )
 
 
-# =========================================================
-# STAIR
-# =========================================================
+# ------------------------------------------------------------
+# Stair slab
+# ------------------------------------------------------------
 
 def stair_slab(
     length_m,
@@ -1862,14 +1432,21 @@ def stair_slab(
     steps=0,
     step_riser=0,
     step_tread=0,
-    standard=STANDARD_IRAN,
-    concrete_strength_mpa=25,
-    rebar_yield_mpa=400,
+    cover_mm=None,
+    standard="iran",
+    fc_mpa=25,
+    fy_mpa=400,
+    design_life_years=50,
+    environment="normal",
 ):
-    cover = default_cover_mm(
-        standard,
-        "stair",
-    )
+    if cover_mm is None:
+        cover_mm = required_cover_mm(
+            standard,
+            "stair",
+            fc_mpa,
+            design_life_years,
+            environment,
+        )
 
     concrete = (
         length_m
@@ -1881,20 +1458,20 @@ def stair_slab(
 
     L = usable_length(
         length_m,
-        cover,
+        cover_mm,
     )
 
     W = usable_length(
         width_m,
-        cover,
+        cover_mm,
     )
 
-    main_count = number_of_bars_in_direction(
+    nm = number_of_bars_in_direction(
         W,
         main_spacing,
     )
 
-    distribution_count = number_of_bars_in_direction(
+    nd = number_of_bars_in_direction(
         L,
         dist_spacing,
     )
@@ -1902,72 +1479,79 @@ def stair_slab(
     add_rebar_detail(
         details,
         main_dia,
-        [L] * main_count,
+        [L] * nm,
         "راه‌پله - میلگرد اصلی",
     )
 
     add_rebar_detail(
         details,
         dist_dia,
-        [W] * distribution_count,
+        [W] * nd,
         "راه‌پله - میلگرد توزیعی",
     )
+
+    step_concrete = 0
 
     if (
         steps
         and step_riser
         and step_tread
     ):
-
-        concrete += (
+        step_concrete = (
             steps
             * step_riser
             * step_tread
             * width_m
         )
 
+        concrete += step_concrete
+
     return _member_result(
         concrete,
         details,
         steps=steps,
-        standard=normalize_standard(
-            standard
-        ),
+        cover_mm=cover_mm,
+        standard=normalize_standard(standard),
     )
 
 
-# =========================================================
-# ROOF THERMAL MESH
-# =========================================================
-
-ROOF_CONCRETE_COEFF = {
-    "foam": 0.18,
-    "clay": 0.20,
-    "double": 0.23,
-    "kromit": 0.18,
-    "composite": 0.15,
-    "steeldeck": 0.15,
-    "slab": 0.20,
-    "waffle": 0.20,
-}
-
+# ------------------------------------------------------------
+# Geometric roof reinforcement mesh
+# ------------------------------------------------------------
 
 def roof_mesh(
     length_m,
     width_m,
     thickness_m,
-    mesh_diameter_mm,
-    mesh_spacing_mm,
-    concrete_coeff=0.20,
+    mesh_dia,
+    mesh_spacing,
     cover_mm=None,
-    standard=STANDARD_IRAN,
-    concrete_strength_mpa=25,
-    rebar_yield_mpa=400,
+    standard="iran",
+    fc_mpa=25,
+    fy_mpa=400,
+    design_life_years=50,
+    environment="normal",
 ):
+    """
+    Geometric thermal/distribution mesh.
+
+    Unlike the old roof_slab() kg/m2 method, this calculates:
+      - actual number of bars
+      - actual piece lengths
+      - total steel length
+      - weight
+      - 12m stock bars
+      - waste
+      - cut list
+    """
+
     if cover_mm is None:
-        cover_mm = default_cover_mm(
+        cover_mm = required_cover_mm(
             standard,
             "roof",
+            fc_mpa,
+            design_life_years,
+            environment,
         )
 
     concrete = (
@@ -1986,50 +1570,62 @@ def roof_mesh(
         cover_mm,
     )
 
-    bars_across_width = number_of_bars_in_direction(
+    # Bars running in X direction:
+    # number determined across width
+    nx = number_of_bars_in_direction(
         W,
-        mesh_spacing_mm,
+        mesh_spacing,
     )
 
-    bars_across_length = number_of_bars_in_direction(
+    # Bars running in Y direction:
+    # number determined across length
+    ny = number_of_bars_in_direction(
         L,
-        mesh_spacing_mm,
+        mesh_spacing,
     )
 
     details = []
 
     add_rebar_detail(
         details,
-        mesh_diameter_mm,
-        [L] * bars_across_width,
-        "سقف - شبکه حرارتی X",
+        mesh_dia,
+        [L] * nx,
+        "سقف - مش حرارتی X",
     )
 
     add_rebar_detail(
         details,
-        mesh_diameter_mm,
-        [W] * bars_across_length,
-        "سقف - شبکه حرارتی Y",
+        mesh_dia,
+        [W] * ny,
+        "سقف - مش حرارتی Y",
     )
 
-    return _member_result(
-        concrete,
-        details,
-        area_m2=(
+    final = finalize_rebar_details(
+        details
+    )
+
+    return {
+        "concrete_m3": concrete,
+        "total_concrete_m3": concrete,
+        "total_rebar_kg": sum(
+            x["weight_kg"]
+            for x in final
+        ),
+        "rebar_details": final,
+        "area_m2": (
             length_m
             * width_m
         ),
-        mesh_diameter_mm=int(
-            mesh_diameter_mm
-        ),
-        mesh_spacing_mm=float(
-            mesh_spacing_mm
-        ),
-        standard=normalize_standard(
+        "cover_mm": cover_mm,
+        "standard": normalize_standard(
             standard
         ),
-    )
+    }
 
+
+# ------------------------------------------------------------
+# Backward-compatible old roof function
+# ------------------------------------------------------------
 
 def roof_slab(
     area_m2,
@@ -2038,70 +1634,73 @@ def roof_slab(
     rebar_kg_m2=0,
 ):
     """
-    Backward-compatible old API.
+    Legacy function.
 
+    Kept for old bot compatibility.
     New UI should use roof_mesh().
     """
 
     concrete = (
-        float(area_m2)
-        * float(concrete_coeff)
+        area_m2
+        * concrete_coeff
     )
 
     details = []
 
     if rebar_kg_m2 > 0:
 
-        target_weight = (
-            float(area_m2)
-            * float(rebar_kg_m2)
+        weight = (
+            area_m2
+            * rebar_kg_m2
         )
 
-        total_length = (
-            target_weight
-            / rebar_unit_weight(
-                rebar_dia
-            )
+        unit_weight = REBAR_WEIGHT.get(
+            int(rebar_dia),
+            int(rebar_dia) ** 2 / 162.0,
+        )
+
+        length = (
+            weight
+            / unit_weight
         )
 
         add_rebar_detail(
             details,
             rebar_dia,
-            [total_length],
-            "سقف - میلگرد حرارتی",
+            [length],
+            "سقف - میلگرد حرارتی/تخمینی",
         )
 
     return _member_result(
         concrete,
         details,
-        area_m2=float(area_m2),
+        area_m2=area_m2,
     )
 
 
-# =========================================================
-# REBAR EQUIVALENCY
-# =========================================================
+# ------------------------------------------------------------
+# Rebar equivalency
+# ------------------------------------------------------------
 
-def equivalent_rebar_count(
+def rebar_equivalency(
     current_count,
     current_diameter_mm,
     replacement_diameter_mm,
-    standard=STANDARD_IRAN,
+    standard="iran",
 ):
     """
-    Fast substitution check.
+    Fast reinforcement area equivalency.
 
-    The mathematical equivalency is based on required
-    reinforcement area.
+    IMPORTANT:
+    This function checks steel area only.
 
-    A complete structural substitution check additionally
-    requires member design, spacing, development/splice,
-    minimum/maximum reinforcement and detailing conditions.
+    It does NOT by itself prove that the substitution is permitted
+    in the structural design because spacing, development length,
+    splice, minimum/maximum reinforcement, seismic detailing,
+    bar arrangement and member-specific requirements may govern.
     """
 
-    current_count = int(
-        current_count
-    )
+    current_count = int(current_count)
 
     current_diameter_mm = float(
         current_diameter_mm
@@ -2113,7 +1712,15 @@ def equivalent_rebar_count(
 
     if current_count <= 0:
         raise ValueError(
-            "Current bar count must be positive."
+            "Current rebar count must be greater than zero."
+        )
+
+    if (
+        current_diameter_mm <= 0
+        or replacement_diameter_mm <= 0
+    ):
+        raise ValueError(
+            "Rebar diameter must be greater than zero."
         )
 
     current_area = (
@@ -2123,109 +1730,238 @@ def equivalent_rebar_count(
         )
     )
 
-    replacement_one_area = (
-        rebar_area_mm2(
-            replacement_diameter_mm
-        )
+    replacement_area_one = rebar_area_mm2(
+        replacement_diameter_mm
     )
 
     required_count = math.ceil(
         current_area
-        / replacement_one_area
+        / replacement_area_one
     )
 
     replacement_area = (
         required_count
-        * replacement_one_area
+        * replacement_area_one
+    )
+
+    equivalent = (
+        replacement_area
+        >= current_area
+    )
+
+    area_difference = (
+        replacement_area
+        - current_area
     )
 
     return {
-        "standard":
-            normalize_standard(
-                standard
-            ),
-
-        "current_count":
-            current_count,
-
-        "current_diameter_mm":
-            int(current_diameter_mm),
-
-        "current_area_mm2":
-            current_area,
-
-        "replacement_diameter_mm":
-            int(
-                replacement_diameter_mm
-            ),
-
-        "required_count":
-            required_count,
-
-        "replacement_area_mm2":
-            replacement_area,
-
-        "area_difference_mm2":
-            replacement_area
-            - current_area,
-
-        "area_ratio":
-            replacement_area
-            / current_area,
-
-        "area_equivalent":
-            replacement_area
-            >= current_area,
+        "standard": normalize_standard(
+            standard
+        ),
+        "current_count": current_count,
+        "current_diameter_mm": current_diameter_mm,
+        "current_area_mm2": current_area,
+        "replacement_diameter_mm": replacement_diameter_mm,
+        "required_replacement_count": required_count,
+        "replacement_area_mm2": replacement_area,
+        "area_difference_mm2": area_difference,
+        "area_equivalent": equivalent,
+        "status": (
+            "area_equivalent"
+            if equivalent
+            else "not_area_equivalent"
+        ),
+        "warning": (
+            "کنترل فقط از نظر سطح مقطع میلگرد انجام شده است؛ "
+            "مجاز بودن نهایی جایگزینی نیازمند کنترل فاصله، "
+            "مهاری/وصله، حداقل و حداکثر آرماتور و جزئیات عضو است."
+        ),
     }
 
 
-# =========================================================
-# PROJECT TOTAL
-# =========================================================
+# ------------------------------------------------------------
+# Development / anchorage helper
+# ------------------------------------------------------------
 
-def total_foundation_result(
-    results,
+def development_length_basic(
+    diameter_mm,
+    fy_mpa=400,
+    fc_mpa=25,
+    standard="iran",
 ):
+    """
+    Basic internal estimator.
+
+    This is intentionally NOT presented as final code compliance.
+    Exact anchorage/splice length depends on member condition,
+    bar position, confinement, coating, concrete type, seismic
+    requirements and other code variables.
+
+    Returns a transparent baseline value so the bot can later
+    expand it when the relevant project inputs are available.
+    """
+
+    d = float(diameter_mm)
+    fy = normalize_fy(fy_mpa)
+    fc = max(normalize_fc(fc_mpa), 1.0)
+
+    standard = normalize_standard(
+        standard
+    )
+
+    if standard == "china":
+        # Conservative baseline placeholder for the engine.
+        # Final GB/T calculation requires code-specific conditions.
+        baseline = (
+            0.10
+            * fy
+            / math.sqrt(fc)
+            * d
+        )
+
+    elif standard == "ec2":
+        baseline = (
+            0.10
+            * fy
+            / (1.0 + math.sqrt(fc))
+            * d
+        )
+
+    elif standard == "aci318":
+        baseline = (
+            0.10
+            * fy
+            / math.sqrt(fc)
+            * d
+        )
+
+    else:
+        baseline = (
+            0.10
+            * fy
+            / math.sqrt(fc)
+            * d
+        )
+
+    return {
+        "standard": standard,
+        "diameter_mm": d,
+        "baseline_length_mm": max(
+            baseline,
+            10.0 * d,
+        ),
+        "is_final_code_check": False,
+        "note": (
+            "این مقدار برآورد پایه موتور است و "
+            "جایگزین کنترل نهایی طول مهاری/وصله "
+            "طبق شرایط کامل آیین‌نامه نیست."
+        ),
+    }
+
+
+# ------------------------------------------------------------
+# Foundation aggregation
+# ------------------------------------------------------------
+
+def total_foundation_result(results):
     total_concrete = sum(
-        float(
-            r.get(
-                "total_concrete_m3",
-                0,
-            )
-            or 0
+        r.get(
+            "total_concrete_m3",
+            0,
         )
         for r in results
     )
 
     total_rebar = sum(
-        float(
-            r.get(
-                "total_rebar_kg",
-                0,
-            )
-            or 0
+        r.get(
+            "total_rebar_kg",
+            0,
         )
         for r in results
     )
 
-    final = finalize_rebar_details(
-        [
-            detail
-            for result in results
-            for detail in result.get(
+    all_details = []
+
+    for r in results:
+        all_details.extend(
+            r.get(
                 "rebar_details",
                 [],
             )
-        ]
+        )
+
+    final = finalize_rebar_details(
+        all_details
     )
 
     return {
-        "total_concrete_m3":
-            total_concrete,
+        "total_concrete_m3": total_concrete,
+        "total_rebar_kg": total_rebar,
+        "rebar_details": final,
+    }
 
-        "total_rebar_kg":
-            total_rebar,
 
-        "rebar_details":
-            final,
+# ------------------------------------------------------------
+# Utility
+# ------------------------------------------------------------
+
+def cut_list_from_details(rebar_details):
+    """
+    Rebuilds cut-list information directly from 12m stock bars.
+    Waste is ALWAYS recalculated as:
+        12.0 - used
+    """
+
+    result = []
+
+    for detail in rebar_details:
+
+        dia = int(
+            detail["diameter_mm"]
+        )
+
+        pieces = detail.get(
+            "piece_lengths_m",
+            [],
+        )
+
+        plan = optimize_12m_bars(
+            pieces
+        )
+
+        result.append(
+            {
+                "diameter_mm": dia,
+                "stock_bars": plan[
+                    "stock_bars"
+                ],
+                "waste_m": plan[
+                    "waste_m"
+                ],
+                "plans": plan[
+                    "plans"
+                ],
+            }
+        )
+
+    return result
+
+
+# ------------------------------------------------------------
+# Standard information helper for bot.py
+# ------------------------------------------------------------
+
+def standard_summary(standard):
+    standard = normalize_standard(
+        standard
+    )
+
+    info = get_standard_info(
+        standard
+    )
+
+    return {
+        "id": standard,
+        "name": info["name"],
+        "code": info["code"],
     }
