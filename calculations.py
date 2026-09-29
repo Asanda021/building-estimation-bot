@@ -1,182 +1,192 @@
 import math
 
+
+# =========================================================
+# وزن واحد میلگرد - kg/m
+# =========================================================
+
 REBAR_WEIGHT = {
     6: 0.222,
     8: 0.395,
     10: 0.617,
     12: 0.888,
-    14: 1.208,
-    16: 1.578,
-    18: 2.000,
-    20: 2.469,
-    22: 2.984,
-    25: 3.858,
-    28: 4.830,
-    32: 6.313,
+    14: 1.21,
+    16: 1.58,
+    18: 2.00,
+    20: 2.47,
+    22: 2.98,
+    25: 3.85,
+    28: 4.83,
+    32: 6.31,
 }
 
 
 # =========================================================
-# BASIC REBAR FUNCTIONS
+# Basic Rebar Functions
 # =========================================================
 
 def rebar_weight(length_m, diameter_mm):
-    """
-    Weight of rebar based on actual length.
-    """
-    if length_m <= 0 or diameter_mm <= 0:
-        return 0.0
+
+    diameter_mm = int(diameter_mm)
 
     if diameter_mm in REBAR_WEIGHT:
         return length_m * REBAR_WEIGHT[diameter_mm]
 
-    # Standard formula: d² / 162
+    # Formula for uncommon diameters
     return length_m * (diameter_mm ** 2) / 162
 
 
 def bars_12m(length_m):
-    """
-    Simple theoretical number of 12m bars.
-    Kept for compatibility.
-    """
+
     if length_m <= 0:
         return 0
 
     return math.ceil(length_m / 12)
 
 
-def number_of_bars_in_direction(length_m, spacing_mm):
-    """
-    Number of bars required along a direction.
-    """
-    if length_m <= 0 or spacing_mm <= 0:
+def number_of_bars_in_direction(
+    usable_length_m,
+    spacing_mm
+):
+
+    if usable_length_m <= 0 or spacing_mm <= 0:
         return 0
 
-    return math.ceil((length_m * 1000) / spacing_mm) + 1
+    spacing_m = spacing_mm / 1000
+
+    return math.floor(
+        usable_length_m / spacing_m
+    ) + 1
 
 
-def usable_length(length_m, cover_mm=50):
-    """
-    Clear usable dimension after subtracting cover from both sides.
-    """
-    value = length_m - (2 * cover_mm / 1000)
+def usable_length(
+    total_length_m,
+    cover_mm=50
+):
 
-    if value < 0:
-        return 0
+    cover_m = cover_mm / 1000
 
-    return value
+    return max(
+        total_length_m - (2 * cover_m),
+        0
+    )
 
 
 def bar_length_with_lap(
     length_m,
     lap_percent=0
 ):
-    """
-    Adds lap allowance only when explicitly requested.
-    """
+
     if length_m <= 0:
         return 0
 
-    if lap_percent <= 0:
-        return length_m
-
-    return length_m * (1 + lap_percent / 100)
+    return length_m * (
+        1 + lap_percent / 100
+    )
 
 
 # =========================================================
-# CUTTING / 12M BAR OPTIMIZATION
+# 12m Stock Bar Optimization
 # =========================================================
 
-def optimize_12m_bars(piece_lengths):
-    """
-    Simple First-Fit Decreasing optimization.
+def optimize_12m_bars(
+    piece_lengths
+):
 
-    Example:
-        [5.2, 4.8, 6.0, 6.0]
-    tries to place pieces into 12m stock bars
-    with minimum unused length.
-
-    Returns:
-        {
-            "stock_bars": number,
-            "waste_m": total waste,
-            "plans": [
-                {
-                    "stock_length_m": 12,
-                    "pieces": [...],
-                    "used_m": ...,
-                    "waste_m": ...
-                }
-            ]
-        }
-    """
-
-    pieces = [
+    clean_lengths = [
         float(x)
         for x in piece_lengths
-        if x is not None and x > 0
+        if x is not None and float(x) > 0
     ]
 
-    if not pieces:
+    if not clean_lengths:
+
         return {
             "stock_bars": 0,
-            "waste_m": 0.0,
+            "waste_m": 0,
             "plans": []
         }
 
-    # Longest pieces first
-    pieces.sort(reverse=True)
+    # -----------------------------------------------------
+    # هیچ قطعه‌ای نباید از شاخه 12 متری بزرگ‌تر باشد
+    # -----------------------------------------------------
 
-    stocks = []
+    for length in clean_lengths:
 
-    for piece in pieces:
+        if length > 12.000001:
+
+            raise ValueError(
+                f"Bar piece length {length:.2f} m "
+                f"is longer than 12 m."
+            )
+
+    # -----------------------------------------------------
+    # First Fit Decreasing
+    # -----------------------------------------------------
+
+    sorted_lengths = sorted(
+        clean_lengths,
+        reverse=True
+    )
+
+    bars = []
+
+    for piece in sorted_lengths:
 
         placed = False
 
-        # Best-fit:
-        # place the piece in the stock bar with
-        # the smallest remaining space that can accept it.
-        best_index = None
-        best_remaining = None
+        for bar in bars:
 
-        for i, stock in enumerate(stocks):
+            if (
+                bar["used_m"] + piece
+                <= 12.000001
+            ):
 
-            remaining = 12.0 - stock["used_m"]
+                bar["pieces"].append(
+                    piece
+                )
 
-            if piece <= remaining + 1e-9:
+                bar["used_m"] += piece
 
-                after = remaining - piece
+                bar["waste_m"] = (
+                    12
+                    - bar["used_m"]
+                )
 
-                if best_remaining is None or after < best_remaining:
-                    best_remaining = after
-                    best_index = i
+                placed = True
 
-        if best_index is not None:
-
-            stock = stocks[best_index]
-            stock["pieces"].append(piece)
-            stock["used_m"] += piece
-            stock["waste_m"] = 12.0 - stock["used_m"]
-
-            placed = True
+                break
 
         if not placed:
 
-            stocks.append({
-                "stock_length_m": 12.0,
+            bars.append({
+
                 "pieces": [piece],
+
                 "used_m": piece,
-                "waste_m": 12.0 - piece
+
+                "waste_m": 12 - piece
+
             })
 
-    total_waste = sum(x["waste_m"] for x in stocks)
+    total_waste = sum(
+        bar["waste_m"]
+        for bar in bars
+    )
 
     return {
-        "stock_bars": len(stocks),
+
+        "stock_bars": len(bars),
+
         "waste_m": total_waste,
-        "plans": stocks
+
+        "plans": bars
     }
 
+
+# =========================================================
+# Rebar Detail
+# =========================================================
 
 def make_rebar_detail(
     diameter_mm,
@@ -184,33 +194,28 @@ def make_rebar_detail(
     description="",
     lap_percent=0
 ):
-    """
-    Creates a detailed rebar record.
 
-    Each physical bar is represented as one piece.
-    """
-
-    if not piece_lengths:
-        return None
-
-    final_lengths = []
+    processed_lengths = []
 
     for length in piece_lengths:
+
+        length = float(length)
 
         if length <= 0:
             continue
 
-        final_length = bar_length_with_lap(
+        length = bar_length_with_lap(
             length,
             lap_percent
         )
 
-        final_lengths.append(final_length)
+        processed_lengths.append(
+            length
+        )
 
-    if not final_lengths:
-        return None
-
-    total_length = sum(final_lengths)
+    total_length = sum(
+        processed_lengths
+    )
 
     weight = rebar_weight(
         total_length,
@@ -218,23 +223,37 @@ def make_rebar_detail(
     )
 
     optimization = optimize_12m_bars(
-        final_lengths
+        processed_lengths
     )
 
     return {
-        "diameter_mm": int(diameter_mm),
-        "length_m": total_length,
-        "weight_kg": weight,
 
-        # Real optimized number of stock bars
-        "bars_12m": optimization["stock_bars"],
+        "diameter_mm":
+            int(diameter_mm),
 
-        # Additional information
-        "piece_count": len(final_lengths),
-        "piece_lengths_m": final_lengths,
-        "waste_m": optimization["waste_m"],
-        "cut_plan": optimization["plans"],
-        "description": description,
+        "length_m":
+            total_length,
+
+        "weight_kg":
+            weight,
+
+        "bars_12m":
+            optimization["stock_bars"],
+
+        "piece_count":
+            len(processed_lengths),
+
+        "piece_lengths_m":
+            processed_lengths,
+
+        "waste_m":
+            optimization["waste_m"],
+
+        "cut_plan":
+            optimization["plans"],
+
+        "description":
+            description
     }
 
 
@@ -245,96 +264,129 @@ def add_rebar_detail(
     description="",
     lap_percent=0
 ):
-    """
-    Adds one reinforcement group to rebar_details.
-    """
 
     if not piece_lengths:
         return
 
-    item = make_rebar_detail(
-        diameter_mm=diameter_mm,
-        piece_lengths=piece_lengths,
-        description=description,
-        lap_percent=lap_percent
+    new_detail = make_rebar_detail(
+        diameter_mm,
+        piece_lengths,
+        description,
+        lap_percent
     )
 
-    if item:
-        details.append(item)
+    details.append(
+        new_detail
+    )
 
 
-def finalize_rebar_details(details):
-    """
-    Combines all reinforcement groups having the same diameter.
-
-    The Telegram bot already expects:
-        diameter_mm
-        length_m
-        weight_kg
-        bars_12m
-    """
+def finalize_rebar_details(
+    details
+):
 
     if not details:
         return []
 
+    # -----------------------------------------------------
+    # تفکیک بر اساس قطر
+    # -----------------------------------------------------
+
     grouped = {}
 
-    for item in details:
+    for detail in details:
 
-        diameter = item["diameter_mm"]
+        diameter = int(
+            detail["diameter_mm"]
+        )
 
         if diameter not in grouped:
 
-            grouped[diameter] = {
-                "diameter_mm": diameter,
-                "length_m": 0.0,
-                "weight_kg": 0.0,
-                "bars_12m": 0,
-                "piece_count": 0,
-                "waste_m": 0.0,
-                "piece_lengths_m": [],
-                "cut_plan": [],
-                "description": "",
-            }
+            grouped[diameter] = []
 
-        grouped[diameter]["length_m"] += item["length_m"]
-        grouped[diameter]["weight_kg"] += item["weight_kg"]
-        grouped[diameter]["piece_count"] += item.get(
-            "piece_count",
-            0
-        )
-        grouped[diameter]["waste_m"] += item.get(
-            "waste_m",
-            0
+        grouped[diameter].extend(
+            detail.get(
+                "piece_lengths_m",
+                []
+            )
         )
 
-        grouped[diameter]["piece_lengths_m"].extend(
-            item.get("piece_lengths_m", [])
-        )
+    final_details = []
 
-        if item.get("description"):
-            if grouped[diameter]["description"]:
-                grouped[diameter]["description"] += " + "
+    for diameter in sorted(
+        grouped.keys()
+    ):
 
-            grouped[diameter]["description"] += item["description"]
-
-    # Re-optimize all pieces of each diameter together.
-    # This is more realistic because different reinforcement
-    # groups of the same diameter can share 12m stock bars.
-    for diameter, item in grouped.items():
+        pieces = grouped[diameter]
 
         optimization = optimize_12m_bars(
-            item["piece_lengths_m"]
+            pieces
         )
 
-        item["bars_12m"] = optimization["stock_bars"]
-        item["waste_m"] = optimization["waste_m"]
-        item["cut_plan"] = optimization["plans"]
+        total_length = sum(
+            pieces
+        )
 
-    return sorted(
-        grouped.values(),
-        key=lambda x: x["diameter_mm"]
-    )
+        weight = rebar_weight(
+            total_length,
+            diameter
+        )
+
+        descriptions = []
+
+        for detail in details:
+
+            if (
+                int(detail["diameter_mm"])
+                == diameter
+            ):
+
+                description = detail.get(
+                    "description",
+                    ""
+                )
+
+                if (
+                    description
+                    and description not in descriptions
+                ):
+
+                    descriptions.append(
+                        description
+                    )
+
+        final_details.append({
+
+            "diameter_mm":
+                diameter,
+
+            "length_m":
+                total_length,
+
+            "weight_kg":
+                weight,
+
+            "bars_12m":
+                optimization["stock_bars"],
+
+            "piece_count":
+                len(pieces),
+
+            "piece_lengths_m":
+                pieces,
+
+            "waste_m":
+                optimization["waste_m"],
+
+            "cut_plan":
+                optimization["plans"],
+
+            "description":
+                " + ".join(
+                    descriptions
+                )
+        })
+
+    return final_details
 
 
 # =========================================================
@@ -360,9 +412,18 @@ def isolated_footing(
     pedestal_height_m=0
 ):
 
+    count = int(count)
+
     # -----------------------------------------------------
-    # CONCRETE
+    # Concrete
     # -----------------------------------------------------
+
+    lean_concrete = (
+        count
+        * lean_concrete_length_m
+        * lean_concrete_width_m
+        * lean_concrete_thickness_m
+    )
 
     footing_concrete = (
         count
@@ -378,148 +439,174 @@ def isolated_footing(
         * pedestal_height_m
     )
 
-    lean_concrete = (
-        count
-        * lean_concrete_length_m
-        * lean_concrete_width_m
-        * lean_concrete_thickness_m
-    )
-
-    total_concrete = (
-        footing_concrete
-        + pedestal_concrete
-    )
-
     # -----------------------------------------------------
-    # REBAR DETAILS
+    # Rebar Details
     # -----------------------------------------------------
 
     details = []
 
-    # Usable dimensions after cover
-    usable_length = usable_length(
+    # -----------------------------------------------------
+    # Bottom Mesh - X
+    # میلگردها در جهت طول پی
+    # تعداد بر اساس عرض پی
+    # -----------------------------------------------------
+
+    usable_length_m = usable_length(
         length_m,
         cover_mm
     )
 
-    usable_width = usable_length(
+    usable_width_m = usable_length(
         width_m,
         cover_mm
     )
 
-    # -----------------------------------------------------
-    # BOTTOM MESH
-    # -----------------------------------------------------
+    bottom_x_count = number_of_bars_in_direction(
+        usable_width_m,
+        bottom_spacing_mm
+    )
 
-    if bottom_diameter_mm and bottom_spacing_mm:
+    bottom_x_piece_length = (
+        usable_length_m
+    )
 
-        # Bars running in X direction
-        x_count = number_of_bars_in_direction(
-            width_m - (2 * cover_mm / 1000),
-            bottom_spacing_mm
+    bottom_x_pieces = [
+        bottom_x_piece_length
+        for _ in range(
+            bottom_x_count * count
         )
+    ]
 
-        # Bars running in Y direction
-        y_count = number_of_bars_in_direction(
-            length_m - (2 * cover_mm / 1000),
-            bottom_spacing_mm
-        )
-
-        x_pieces = [
-            usable_length
-            for _ in range(x_count * count)
-        ]
-
-        y_pieces = [
-            usable_width
-            for _ in range(y_count * count)
-        ]
-
-        add_rebar_detail(
-            details,
-            bottom_diameter_mm,
-            x_pieces,
-            "پی منفرد - پایین X",
-            lap_percent
-        )
-
-        add_rebar_detail(
-            details,
-            bottom_diameter_mm,
-            y_pieces,
-            "پی منفرد - پایین Y",
-            lap_percent
-        )
+    add_rebar_detail(
+        details,
+        bottom_diameter_mm,
+        bottom_x_pieces,
+        "پی منفرد - شبکه پایین X",
+        lap_percent
+    )
 
     # -----------------------------------------------------
-    # TOP MESH
+    # Bottom Mesh - Y
+    # -----------------------------------------------------
+
+    bottom_y_count = number_of_bars_in_direction(
+        usable_length_m,
+        bottom_spacing_mm
+    )
+
+    bottom_y_piece_length = (
+        usable_width_m
+    )
+
+    bottom_y_pieces = [
+        bottom_y_piece_length
+        for _ in range(
+            bottom_y_count * count
+        )
+    ]
+
+    add_rebar_detail(
+        details,
+        bottom_diameter_mm,
+        bottom_y_pieces,
+        "پی منفرد - شبکه پایین Y",
+        lap_percent
+    )
+
+    # -----------------------------------------------------
+    # Top Mesh
     # -----------------------------------------------------
 
     if (
         top_diameter_mm
         and top_spacing_mm
+        and top_diameter_mm > 0
+        and top_spacing_mm > 0
     ):
 
-        x_count = number_of_bars_in_direction(
-            width_m - (2 * cover_mm / 1000),
+        top_x_count = number_of_bars_in_direction(
+            usable_width_m,
             top_spacing_mm
         )
 
-        y_count = number_of_bars_in_direction(
-            length_m - (2 * cover_mm / 1000),
-            top_spacing_mm
-        )
-
-        x_pieces = [
-            usable_length
-            for _ in range(x_count * count)
-        ]
-
-        y_pieces = [
-            usable_width
-            for _ in range(y_count * count)
+        top_x_pieces = [
+            usable_length_m
+            for _ in range(
+                top_x_count * count
+            )
         ]
 
         add_rebar_detail(
             details,
             top_diameter_mm,
-            x_pieces,
-            "پی منفرد - بالا X",
+            top_x_pieces,
+            "پی منفرد - شبکه بالا X",
             lap_percent
         )
+
+        top_y_count = number_of_bars_in_direction(
+            usable_length_m,
+            top_spacing_mm
+        )
+
+        top_y_pieces = [
+            usable_width_m
+            for _ in range(
+                top_y_count * count
+            )
+        ]
 
         add_rebar_detail(
             details,
             top_diameter_mm,
-            y_pieces,
-            "پی منفرد - بالا Y",
+            top_y_pieces,
+            "پی منفرد - شبکه بالا Y",
             lap_percent
         )
 
-    details = finalize_rebar_details(
+    # -----------------------------------------------------
+    # Finalize
+    # -----------------------------------------------------
+
+    final_details = finalize_rebar_details(
         details
     )
 
     total_rebar = sum(
-        x["weight_kg"]
-        for x in details
+        item["weight_kg"]
+        for item in final_details
     )
 
     return {
-        "lean_concrete_m3": lean_concrete,
-        "footing_concrete_m3": footing_concrete,
-        "pedestal_concrete_m3": pedestal_concrete,
-        "total_concrete_m3": total_concrete,
 
-        "rebar_details": details,
+        "lean_concrete_m3":
+            lean_concrete,
 
-        "bottom_rebar_weight_kg": sum(
-            x["weight_kg"]
-            for x in details
-        ),
+        "footing_concrete_m3":
+            footing_concrete,
 
-        "top_rebar_weight_kg": 0,
-        "total_rebar_kg": total_rebar,
+        "pedestal_concrete_m3":
+            pedestal_concrete,
+
+        "total_concrete_m3":
+            lean_concrete
+            + footing_concrete
+            + pedestal_concrete,
+
+        "bottom_rebar_weight_kg":
+            sum(
+                item["weight_kg"]
+                for item in final_details
+            ),
+
+        "top_rebar_weight_kg":
+            0,
+
+        "total_rebar_kg":
+            total_rebar,
+
+        "rebar_details":
+            final_details
     }
 
 
@@ -547,8 +634,12 @@ def strip_footing(
     lap_percent=0
 ):
 
+    strip_count = int(
+        strip_count
+    )
+
     # -----------------------------------------------------
-    # CONCRETE
+    # Concrete
     # -----------------------------------------------------
 
     footing_concrete = (
@@ -558,161 +649,157 @@ def strip_footing(
         * footing_thickness_m
     )
 
-    lean_concrete = (
-        strip_count
-        * lean_length_m
-        * lean_width_m
-        * lean_thickness_m
-    )
-
     details = []
 
-    usable_length = usable_length(
+    # -----------------------------------------------------
+    # Usable Dimensions
+    # -----------------------------------------------------
+
+    usable_strip_length_m = usable_length(
         strip_length_m,
         cover_mm
     )
 
-    usable_width = usable_length(
+    usable_width_m = usable_length(
         footing_width_m,
         cover_mm
     )
 
     # -----------------------------------------------------
-    # BOTTOM LONGITUDINAL
+    # Bottom Longitudinal
     # -----------------------------------------------------
 
-    if (
-        longitudinal_diameter_mm
-        and longitudinal_count
-    ):
-
-        pieces = [
-            usable_length
-            for _ in range(
-                strip_count
-                * int(longitudinal_count)
-            )
-        ]
-
-        add_rebar_detail(
-            details,
-            longitudinal_diameter_mm,
-            pieces,
-            "پی نواری - پایین طولی",
-            lap_percent
+    bottom_longitudinal_pieces = [
+        usable_strip_length_m
+        for _ in range(
+            int(longitudinal_count)
+            * strip_count
         )
+    ]
+
+    add_rebar_detail(
+        details,
+        longitudinal_diameter_mm,
+        bottom_longitudinal_pieces,
+        "پی نواری - طولی پایین",
+        lap_percent
+    )
 
     # -----------------------------------------------------
-    # BOTTOM TRANSVERSE
+    # Bottom Transverse
     # -----------------------------------------------------
 
-    if (
-        transverse_diameter_mm
-        and transverse_spacing_mm
-    ):
+    transverse_count = number_of_bars_in_direction(
+        usable_strip_length_m,
+        transverse_spacing_mm
+    )
 
-        transverse_count = number_of_bars_in_direction(
-            strip_length_m - (2 * cover_mm / 1000),
-            transverse_spacing_mm
+    bottom_transverse_pieces = [
+        usable_width_m
+        for _ in range(
+            transverse_count
+            * strip_count
         )
+    ]
 
-        pieces = [
-            usable_width
-            for _ in range(
-                strip_count
-                * transverse_count
-            )
-        ]
-
-        add_rebar_detail(
-            details,
-            transverse_diameter_mm,
-            pieces,
-            "پی نواری - پایین عرضی",
-            lap_percent
-        )
+    add_rebar_detail(
+        details,
+        transverse_diameter_mm,
+        bottom_transverse_pieces,
+        "پی نواری - عرضی پایین",
+        lap_percent
+    )
 
     # -----------------------------------------------------
-    # TOP LONGITUDINAL
+    # Top Longitudinal
     # -----------------------------------------------------
 
     if (
         top_longitudinal_diameter_mm
         and top_longitudinal_count
+        and top_longitudinal_diameter_mm > 0
+        and top_longitudinal_count > 0
     ):
 
-        pieces = [
-            usable_length
+        top_longitudinal_pieces = [
+            usable_strip_length_m
             for _ in range(
-                strip_count
-                * int(top_longitudinal_count)
+                int(top_longitudinal_count)
+                * strip_count
             )
         ]
 
         add_rebar_detail(
             details,
             top_longitudinal_diameter_mm,
-            pieces,
-            "پی نواری - بالا طولی",
+            top_longitudinal_pieces,
+            "پی نواری - طولی بالا",
             lap_percent
         )
 
     # -----------------------------------------------------
-    # TOP TRANSVERSE
+    # Top Transverse
     # -----------------------------------------------------
 
     if (
         top_transverse_diameter_mm
         and top_transverse_spacing_mm
+        and top_transverse_diameter_mm > 0
+        and top_transverse_spacing_mm > 0
     ):
 
-        transverse_count = number_of_bars_in_direction(
-            strip_length_m - (2 * cover_mm / 1000),
-            top_transverse_spacing_mm
+        top_transverse_count = (
+            number_of_bars_in_direction(
+                usable_strip_length_m,
+                top_transverse_spacing_mm
+            )
         )
 
-        pieces = [
-            usable_width
+        top_transverse_pieces = [
+            usable_width_m
             for _ in range(
-                strip_count
-                * transverse_count
+                top_transverse_count
+                * strip_count
             )
         ]
 
         add_rebar_detail(
             details,
             top_transverse_diameter_mm,
-            pieces,
-            "پی نواری - بالا عرضی",
+            top_transverse_pieces,
+            "پی نواری - عرضی بالا",
             lap_percent
         )
 
-    details = finalize_rebar_details(
+    # -----------------------------------------------------
+    # Final
+    # -----------------------------------------------------
+
+    final_details = finalize_rebar_details(
         details
     )
 
     total_rebar = sum(
-        x["weight_kg"]
-        for x in details
+        item["weight_kg"]
+        for item in final_details
     )
 
     return {
-        "lean_concrete_m3": lean_concrete,
-        "footing_concrete_m3": footing_concrete,
 
-        "bottom_rebar_length_m": sum(
-            x["length_m"]
-            for x in details
-        ),
+        "lean_concrete_m3":
+            0,
 
-        "top_rebar_length_m": 0,
+        "footing_concrete_m3":
+            footing_concrete,
 
-        "bottom_rebar_weight_kg": total_rebar,
-        "top_rebar_weight_kg": 0,
+        "total_concrete_m3":
+            footing_concrete,
 
-        "rebar_details": details,
+        "total_rebar_kg":
+            total_rebar,
 
-        "total_rebar_kg": total_rebar,
+        "rebar_details":
+            final_details
     }
 
 
@@ -740,7 +827,7 @@ def raft_foundation(
 ):
 
     # -----------------------------------------------------
-    # CONCRETE
+    # Concrete
     # -----------------------------------------------------
 
     raft_concrete = (
@@ -749,13 +836,11 @@ def raft_foundation(
         * thickness_m
     )
 
-    lean_concrete = (
-        lean_length_m
-        * lean_width_m
-        * lean_thickness_m
-    )
-
     details = []
+
+    # -----------------------------------------------------
+    # Usable Dimensions
+    # -----------------------------------------------------
 
     usable_length_m = usable_length(
         length_m,
@@ -767,154 +852,158 @@ def raft_foundation(
         cover_mm
     )
 
-    # -----------------------------------------------------
-    # BOTTOM X
-    # -----------------------------------------------------
+    # =====================================================
+    # Bottom X
+    # =====================================================
 
-    if (
-        bottom_x_diameter_mm
-        and bottom_x_spacing_mm
-    ):
+    bottom_x_count = number_of_bars_in_direction(
+        usable_width_m,
+        bottom_x_spacing_mm
+    )
 
-        count_x = number_of_bars_in_direction(
-            width_m - (2 * cover_mm / 1000),
-            bottom_x_spacing_mm
+    bottom_x_pieces = [
+        usable_length_m
+        for _ in range(
+            bottom_x_count
         )
+    ]
 
-        pieces = [
-            usable_length_m
-            for _ in range(count_x)
-        ]
+    add_rebar_detail(
+        details,
+        bottom_x_diameter_mm,
+        bottom_x_pieces,
+        "رادیه - شبکه پایین X",
+        lap_percent
+    )
 
-        add_rebar_detail(
-            details,
-            bottom_x_diameter_mm,
-            pieces,
-            "رادیه - پایین X",
-            lap_percent
+    # =====================================================
+    # Bottom Y
+    # =====================================================
+
+    bottom_y_count = number_of_bars_in_direction(
+        usable_length_m,
+        bottom_y_spacing_mm
+    )
+
+    bottom_y_pieces = [
+        usable_width_m
+        for _ in range(
+            bottom_y_count
         )
+    ]
 
-    # -----------------------------------------------------
-    # BOTTOM Y
-    # -----------------------------------------------------
+    add_rebar_detail(
+        details,
+        bottom_y_diameter_mm,
+        bottom_y_pieces,
+        "رادیه - شبکه پایین Y",
+        lap_percent
+    )
 
-    if (
-        bottom_y_diameter_mm
-        and bottom_y_spacing_mm
-    ):
-
-        count_y = number_of_bars_in_direction(
-            length_m - (2 * cover_mm / 1000),
-            bottom_y_spacing_mm
-        )
-
-        pieces = [
-            usable_width_m
-            for _ in range(count_y)
-        ]
-
-        add_rebar_detail(
-            details,
-            bottom_y_diameter_mm,
-            pieces,
-            "رادیه - پایین Y",
-            lap_percent
-        )
-
-    # -----------------------------------------------------
-    # TOP X
-    # -----------------------------------------------------
+    # =====================================================
+    # Top X
+    # =====================================================
 
     if (
         top_x_diameter_mm
         and top_x_spacing_mm
+        and top_x_diameter_mm > 0
+        and top_x_spacing_mm > 0
     ):
 
-        count_x = number_of_bars_in_direction(
-            width_m - (2 * cover_mm / 1000),
+        top_x_count = number_of_bars_in_direction(
+            usable_width_m,
             top_x_spacing_mm
         )
 
-        pieces = [
+        top_x_pieces = [
             usable_length_m
-            for _ in range(count_x)
+            for _ in range(
+                top_x_count
+            )
         ]
 
         add_rebar_detail(
             details,
             top_x_diameter_mm,
-            pieces,
-            "رادیه - بالا X",
+            top_x_pieces,
+            "رادیه - شبکه بالا X",
             lap_percent
         )
 
-    # -----------------------------------------------------
-    # TOP Y
-    # -----------------------------------------------------
+    # =====================================================
+    # Top Y
+    # =====================================================
 
     if (
         top_y_diameter_mm
         and top_y_spacing_mm
+        and top_y_diameter_mm > 0
+        and top_y_spacing_mm > 0
     ):
 
-        count_y = number_of_bars_in_direction(
-            length_m - (2 * cover_mm / 1000),
+        top_y_count = number_of_bars_in_direction(
+            usable_length_m,
             top_y_spacing_mm
         )
 
-        pieces = [
+        top_y_pieces = [
             usable_width_m
-            for _ in range(count_y)
+            for _ in range(
+                top_y_count
+            )
         ]
 
         add_rebar_detail(
             details,
             top_y_diameter_mm,
-            pieces,
-            "رادیه - بالا Y",
+            top_y_pieces,
+            "رادیه - شبکه بالا Y",
             lap_percent
         )
 
-    details = finalize_rebar_details(
+    # -----------------------------------------------------
+    # Final
+    # -----------------------------------------------------
+
+    final_details = finalize_rebar_details(
         details
     )
 
     total_rebar = sum(
-        x["weight_kg"]
-        for x in details
+        item["weight_kg"]
+        for item in final_details
     )
 
     return {
-        "lean_concrete_m3": lean_concrete,
-        "raft_concrete_m3": raft_concrete,
 
-        "bottom_rebar_length_m": sum(
-            x["length_m"]
-            for x in details
-        ),
+        "lean_concrete_m3":
+            0,
 
-        "top_rebar_length_m": 0,
+        "raft_concrete_m3":
+            raft_concrete,
 
-        "bottom_rebar_weight_kg": total_rebar,
-        "top_rebar_weight_kg": 0,
+        "total_concrete_m3":
+            raft_concrete,
 
-        "rebar_details": details,
+        "total_rebar_kg":
+            total_rebar,
 
-        "total_rebar_kg": total_rebar,
+        "rebar_details":
+            final_details
     }
 
 
 # =========================================================
-# TOTAL FOUNDATION RESULT
+# Total Foundation Result
 # =========================================================
 
-def total_foundation_result(results):
-    """
-    Combines multiple foundation results.
-    """
+def total_foundation_result(
+    results
+):
 
-    total_concrete = 0.0
-    total_rebar = 0.0
+    total_concrete = 0
+    total_rebar = 0
 
     all_details = []
 
@@ -922,13 +1011,7 @@ def total_foundation_result(results):
 
         total_concrete += result.get(
             "total_concrete_m3",
-            result.get(
-                "footing_concrete_m3",
-                result.get(
-                    "raft_concrete_m3",
-                    0
-                )
-            )
+            0
         )
 
         total_rebar += result.get(
@@ -943,17 +1026,18 @@ def total_foundation_result(results):
             )
         )
 
-    all_details = finalize_rebar_details(
+    final_details = finalize_rebar_details(
         all_details
     )
 
-    total_rebar = sum(
-        x["weight_kg"]
-        for x in all_details
-    )
-
     return {
-        "total_concrete_m3": total_concrete,
-        "total_rebar_kg": total_rebar,
-        "rebar_details": all_details,
+
+        "total_concrete_m3":
+            total_concrete,
+
+        "total_rebar_kg":
+            total_rebar,
+
+        "rebar_details":
+            final_details
     }
