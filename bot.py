@@ -232,10 +232,6 @@ def foundation_menu(lang):
 # =========================================================
 
 def steel_weight(length_m, diameter_mm):
-    """
-    تقریبی وزن میلگرد:
-    kg/m = d² / 162
-    """
 
     if length_m <= 0 or diameter_mm <= 0:
         return 0
@@ -251,6 +247,59 @@ def twelve_meter_bars(length_m):
     import math
 
     return math.ceil(length_m / 12)
+
+
+# =========================================================
+# Rebar Detail Formatter
+# =========================================================
+
+def format_rebar_details(
+    details,
+    lang="fa"
+):
+
+    if not details:
+        return ""
+
+    if lang == "fa":
+
+        message = "🔩 <b>تفکیک میلگرد بر اساس قطر</b>\n\n"
+
+        for item in details:
+
+            diameter = item["diameter_mm"]
+            length = item["length_m"]
+            weight = item["weight_kg"]
+            bars = item["bars_12m"]
+
+            message += (
+                f"🔹 <b>Φ{diameter}</b>\n"
+                f"   📏 طول کل: {length:.1f} m\n"
+                f"   ⚖️ وزن: {weight:.1f} kg\n"
+                f"   📦 شاخه ۱۲ متری: {bars} عدد\n\n"
+            )
+
+        return message
+
+    else:
+
+        message = "🔩 <b>Rebar Breakdown by Diameter</b>\n\n"
+
+        for item in details:
+
+            diameter = item["diameter_mm"]
+            length = item["length_m"]
+            weight = item["weight_kg"]
+            bars = item["bars_12m"]
+
+            message += (
+                f"🔹 <b>Φ{diameter}</b>\n"
+                f"   📏 Total length: {length:.1f} m\n"
+                f"   ⚖️ Weight: {weight:.1f} kg\n"
+                f"   📦 12m bars: {bars}\n\n"
+            )
+
+        return message
 
 
 # =========================================================
@@ -548,10 +597,6 @@ async def receive_text(
 
         return
 
-    # -----------------------------------------------------
-    # Top reinforcement
-    # -----------------------------------------------------
-
     if step == "iso_bottom_spacing":
 
         context.user_data["iso_bottom_spacing"] = int(value)
@@ -666,9 +711,9 @@ async def receive_text(
 
         return
 
-    # -----------------------------------------------------
+    # =====================================================
     # Final isolated calculation
-    # -----------------------------------------------------
+    # =====================================================
 
     if step == "iso_starter_length":
 
@@ -678,11 +723,8 @@ async def receive_text(
 
             result = isolated_footing(
                 count=context.user_data["iso_count"],
-
                 length_m=context.user_data["iso_length"],
-
                 width_m=context.user_data["iso_width"],
-
                 thickness_m=context.user_data["iso_thickness"],
 
                 lean_concrete_length_m=
@@ -716,9 +758,9 @@ async def receive_text(
                     context.user_data["iso_pedestal_height"],
             )
 
-            # -------------------------
+            # -------------------------------------------------
             # Starter bars
-            # -------------------------
+            # -------------------------------------------------
 
             starter_length_total = (
                 context.user_data["iso_count"]
@@ -740,19 +782,72 @@ async def receive_text(
                 + starter_weight
             )
 
-            total_rebar_bars = (
-                result["bottom_bars_12m"]
-                + result["top_bars_12m"]
-                + starter_bars_12m
+            # -------------------------------------------------
+            # Rebar details
+            # -------------------------------------------------
+
+            rebar_details = list(
+                result.get(
+                    "rebar_details",
+                    []
+                )
             )
+
+            starter_diameter = (
+                context.user_data[
+                    "iso_starter_diameter"
+                ]
+            )
+
+            starter_found = False
+
+            for item in rebar_details:
+
+                if item["diameter_mm"] == starter_diameter:
+
+                    item["length_m"] += (
+                        starter_length_total
+                    )
+
+                    item["weight_kg"] += (
+                        starter_weight
+                    )
+
+                    item["bars_12m"] = twelve_meter_bars(
+                        item["length_m"]
+                    )
+
+                    starter_found = True
+                    break
+
+            if not starter_found:
+
+                rebar_details.append({
+                    "diameter_mm":
+                        starter_diameter,
+
+                    "length_m":
+                        starter_length_total,
+
+                    "weight_kg":
+                        starter_weight,
+
+                    "bars_12m":
+                        starter_bars_12m,
+                })
+
+            rebar_details.sort(
+                key=lambda x: x["diameter_mm"]
+            )
+
+            # -------------------------------------------------
+            # Message
+            # -------------------------------------------------
 
             message = (
                 TEXTS[lang]["done"]
 
                 + "⬛ <b>پی منفرد</b>\n\n"
-
-                + f"🧱 بتن مگر: "
-                f"{result['lean_concrete_m3']:.2f} m³\n"
 
                 + f"🧱 بتن خود پی: "
                 f"{result['footing_concrete_m3']:.2f} m³\n"
@@ -760,38 +855,16 @@ async def receive_text(
                 + f"🧱 بتن پدستال: "
                 f"{result['pedestal_concrete_m3']:.2f} m³\n"
 
-                + f"🧱 جمع بتن: "
-                f"<b>{result['total_concrete_m3']:.2f} m³</b>\n\n"
+                + f"🧱 جمع بتن سازه‌ای: "
+                f"<b>{result['footing_concrete_m3'] + result['pedestal_concrete_m3']:.2f} m³</b>\n\n"
 
-                + "🔽 <b>شبکه پایین</b>\n"
+                + format_rebar_details(
+                    rebar_details,
+                    lang
+                )
 
-                + f"⚖️ وزن: "
-                f"{result['bottom_rebar_weight_kg']:.1f} kg\n"
-
-                + f"📦 شاخه ۱۲ متری: "
-                f"{result['bottom_bars_12m']}\n\n"
-
-                + "🔼 <b>شبکه بالا</b>\n"
-
-                + f"⚖️ وزن: "
-                f"{result['top_rebar_weight_kg']:.1f} kg\n"
-
-                + f"📦 شاخه ۱۲ متری: "
-                f"{result['top_bars_12m']}\n\n"
-
-                + "⬆️ <b>میلگرد انتظار ستون</b>\n"
-
-                + f"⚖️ وزن: "
-                f"{starter_weight:.1f} kg\n"
-
-                + f"📦 شاخه ۱۲ متری: "
-                f"{starter_bars_12m}\n\n"
-
-                + f"🔩 <b>جمع کل میلگرد: "
-                f"{total_rebar:.1f} kg</b>\n"
-
-                + f"📦 <b>جمع شاخه‌ها: "
-                f"{total_rebar_bars}</b>\n\n"
+                + f"⚖️ <b>جمع کل میلگرد: "
+                f"{total_rebar:.1f} kg</b>\n\n"
 
                 + "⚠️ مقادیر بر اساس اطلاعات واردشده "
                   "محاسبه شده‌اند."
@@ -954,54 +1027,69 @@ async def receive_text(
         try:
 
             result = strip_footing(
-                strip_count=context.user_data["strip_count"],
-                strip_length_m=context.user_data["strip_length"],
-                footing_width_m=context.user_data["strip_width"],
-                footing_thickness_m=context.user_data["strip_thickness"],
+                strip_count=
+                    context.user_data["strip_count"],
 
-                lean_length_m=context.user_data["strip_lean_length"],
-                lean_width_m=context.user_data["strip_lean_width"],
-                lean_thickness_m=context.user_data["strip_lean_thickness"],
+                strip_length_m=
+                    context.user_data["strip_length"],
+
+                footing_width_m=
+                    context.user_data["strip_width"],
+
+                footing_thickness_m=
+                    context.user_data["strip_thickness"],
+
+                lean_length_m=
+                    context.user_data["strip_lean_length"],
+
+                lean_width_m=
+                    context.user_data["strip_lean_width"],
+
+                lean_thickness_m=
+                    context.user_data["strip_lean_thickness"],
 
                 longitudinal_diameter_mm=
-                    context.user_data["strip_long_diameter"],
+                    context.user_data[
+                        "strip_long_diameter"
+                    ],
 
                 longitudinal_count=
-                    context.user_data["strip_long_count"],
+                    context.user_data[
+                        "strip_long_count"
+                    ],
 
                 transverse_diameter_mm=
-                    context.user_data["strip_trans_diameter"],
+                    context.user_data[
+                        "strip_trans_diameter"
+                    ],
 
                 transverse_spacing_mm=
-                    context.user_data["strip_trans_spacing"],
+                    context.user_data[
+                        "strip_trans_spacing"
+                    ],
             )
 
             message = (
                 TEXTS[lang]["done"]
 
-                + f"🧱 بتن مگر: "
-                f"{result['lean_concrete_m3']:.2f} m³\n"
+                + "▬ <b>پی نواری</b>\n\n"
 
                 + f"🧱 بتن فونداسیون: "
-                f"{result['footing_concrete_m3']:.2f} m³\n"
+                f"{result['footing_concrete_m3']:.2f} m³\n\n"
 
-                + f"🧱 جمع بتن: "
-                f"<b>{result['total_concrete_m3']:.2f} m³</b>\n\n"
+                + format_rebar_details(
+                    result.get(
+                        "rebar_details",
+                        []
+                    ),
+                    lang
+                )
 
-                + f"🔩 میلگرد طولی: "
-                f"{result['longitudinal_rebar_weight_kg']:.1f} kg\n"
+                + f"⚖️ <b>جمع کل میلگرد: "
+                f"{result['total_rebar_kg']:.1f} kg</b>\n\n"
 
-                + f"🔩 میلگرد عرضی: "
-                f"{result['transverse_rebar_weight_kg']:.1f} kg\n"
-
-                + f"🔩 جمع میلگرد: "
-                f"<b>{result['total_rebar_kg']:.1f} kg</b>\n\n"
-
-                + f"📦 شاخه طولی ۱۲ متری: "
-                f"{result['longitudinal_bars_12m']}\n"
-
-                + f"📦 شاخه عرضی ۱۲ متری: "
-                f"{result['transverse_bars_12m']}\n"
+                + "⚠️ مقادیر بر اساس اطلاعات واردشده "
+                  "محاسبه شده‌اند."
             )
 
             context.user_data["step"] = None
@@ -1148,53 +1236,66 @@ async def receive_text(
         try:
 
             result = raft_foundation(
-                length_m=context.user_data["raft_length"],
-                width_m=context.user_data["raft_width"],
-                thickness_m=context.user_data["raft_thickness"],
+                length_m=
+                    context.user_data["raft_length"],
 
-                lean_length_m=context.user_data["raft_lean_length"],
-                lean_width_m=context.user_data["raft_lean_width"],
-                lean_thickness_m=context.user_data["raft_lean_thickness"],
+                width_m=
+                    context.user_data["raft_width"],
+
+                thickness_m=
+                    context.user_data["raft_thickness"],
+
+                lean_length_m=
+                    context.user_data["raft_lean_length"],
+
+                lean_width_m=
+                    context.user_data["raft_lean_width"],
+
+                lean_thickness_m=
+                    context.user_data["raft_lean_thickness"],
 
                 bottom_x_diameter_mm=
-                    context.user_data["raft_bottom_x_diameter"],
+                    context.user_data[
+                        "raft_bottom_x_diameter"
+                    ],
 
                 bottom_x_spacing_mm=
-                    context.user_data["raft_bottom_x_spacing"],
+                    context.user_data[
+                        "raft_bottom_x_spacing"
+                    ],
 
                 bottom_y_diameter_mm=
-                    context.user_data["raft_bottom_y_diameter"],
+                    context.user_data[
+                        "raft_bottom_y_diameter"
+                    ],
 
                 bottom_y_spacing_mm=
-                    context.user_data["raft_bottom_y_spacing"],
+                    context.user_data[
+                        "raft_bottom_y_spacing"
+                    ],
             )
 
             message = (
                 TEXTS[lang]["done"]
 
-                + f"🧱 بتن مگر: "
-                f"{result['lean_concrete_m3']:.2f} m³\n"
+                + "▰ <b>پی رادیه</b>\n\n"
 
                 + f"🧱 بتن رادیه: "
-                f"{result['raft_concrete_m3']:.2f} m³\n"
+                f"{result['raft_concrete_m3']:.2f} m³\n\n"
 
-                + f"🧱 جمع بتن: "
-                f"<b>{result['total_concrete_m3']:.2f} m³</b>\n\n"
+                + format_rebar_details(
+                    result.get(
+                        "rebar_details",
+                        []
+                    ),
+                    lang
+                )
 
-                + f"🔩 شبکه پایین X: "
-                f"{result['bottom_x_weight_kg']:.1f} kg\n"
+                + f"⚖️ <b>جمع کل میلگرد: "
+                f"{result['total_rebar_kg']:.1f} kg</b>\n\n"
 
-                + f"🔩 شبکه پایین Y: "
-                f"{result['bottom_y_weight_kg']:.1f} kg\n"
-
-                + f"🔩 جمع میلگرد: "
-                f"<b>{result['total_rebar_kg']:.1f} kg</b>\n\n"
-
-                + f"📦 شاخه X: "
-                f"{result['bottom_x_bars_12m']}\n"
-
-                + f"📦 شاخه Y: "
-                f"{result['bottom_y_bars_12m']}\n"
+                + "⚠️ مقادیر بر اساس اطلاعات واردشده "
+                  "محاسبه شده‌اند."
             )
 
             context.user_data["step"] = None
