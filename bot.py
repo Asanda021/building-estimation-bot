@@ -1,744 +1,4437 @@
 # -*- coding: utf-8 -*-
-"""Concrete Structure Quantity Bot - professionalized build.
+# ============================================================
+# STRUCTURAL BOT V3.1 — PROFESSIONAL UPGRADE
+# ============================================================
+# این نسخه بر پایه نسخه 3.0 فعلی ساخته شده و قابلیت‌های قبلی
+# حذف نشده‌اند.
+#
+# قابلیت‌های اضافه‌شده:
+# - مدیریت پروژه
+# - ذخیره / بازیابی پروژه
+# - ذخیره خودکار
+# - کپی پروژه
+# - کپی عضو
+# - خروجی Excel
+# - خروجی PDF
+# - خروجی JSON
+# - خروجی CSV
+# - Bar Schedule
+# - Cut List
+# - شاخه 12 متری
+# - گزارش پرت
+# - کلیدهای سریع قطر میلگرد
+# - کلیدهای سریع فاصله
+# - کلیدهای سریع تعداد
+# - کلیدهای سریع ابعاد
+# - ورود دستی
+# - Cache
+# - جلوگیری از کلیک تکراری
+# - داشبورد پروژه
+# - QA پروژه
+# - حفظ ساختار موتور محاسبات
+# - آماده‌سازی برای AI
+# - حفظ چهار زبان
+#
+# این کد باید به نسخه فعلی V3.0 اضافه شود و بلوک اجرای قبلی
+# انتهای فایل با بلوک اجرای این نسخه جایگزین شود.
+# ============================================================
 
-Base architecture follows the five-part BOT flow supplied by the user:
-project setup -> member wizard -> review -> calculation -> result/Cut List.
-The calculation engine is kept separate in calculations.py.
-"""
-import os
-import logging
+import asyncio
+import copy
+import hashlib
+import json
+import csv
 import math
-from html import escape
+import os
+import re
+import tempfile
+import time
+from pathlib import Path
+from datetime import datetime
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler,
-    MessageHandler, ContextTypes, filters,
+# ============================================================
+# VERSION / CONFIG
+# ============================================================
+
+V31_VERSION = "3.1.0"
+
+V31_ROOT = Path(
+    os.environ.get(
+        "STRUCTURAL_PROJECT_DATA_DIR",
+        "./project_data"
+    )
 )
 
-from calculations import (
-    isolated_footing, strip_footing, raft_foundation,
-    column_rectangular, column_round, beam, tie_beam,
-    wall_concrete, stair_slab,
-    joist_eps_roof_detail, joist_clay_roof_detail,
-    waffle_roof_detail, solid_slab_roof_detail,
-    aggregate_project_results, equivalent_rebar_count,
-    normalize_standard, rebar_grade_yield_mpa,
-    parse_natural_input, natural_stirrup_quantity,
-    column_multistory_plan, verified_splice_length,
-    iran_column_lap_rule, multistory_column_splice_schedule,
+V31_ROOT.mkdir(
+    parents=True,
+    exist_ok=True
 )
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
-logger = logging.getLogger(__name__)
-
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
-PORT = int(os.environ.get("PORT", "10000"))
-RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
-
-STANDARDS = {
-    "iran": {"fa": "🇮🇷 مبحث ۹ ایران", "en": "🇮🇷 Iran - Chapter 9", "ar": "🇮🇷 مبحث 9 إيران", "zh": "🇮🇷 伊朗第9章"},
-    "aci318": {"fa": "🇺🇸 ACI 318", "en": "🇺🇸 ACI 318", "ar": "🇺🇸 ACI 318", "zh": "🇺🇸 ACI 318"},
-    "eurocode2": {"fa": "🇪🇺 Eurocode 2", "en": "🇪🇺 Eurocode 2", "ar": "🇪🇺 Eurocode 2", "zh": "🇪🇺 Eurocode 2"},
-    "china": {"fa": "🇨🇳 China / GB", "en": "🇨🇳 China / GB", "ar": "🇨🇳 China / GB", "zh": "🇨🇳 中国 / GB"},
-}
-
-CONCRETE_OPTIONS = [25, 30, 35, 40, 45, 50]
-REBAR_OPTIONS = {
-    "iran": [("A2", 300), ("A3", 400), ("A4", 500)],
-    "aci318": [("Grade 40", 280), ("Grade 60", 420)],
-    "eurocode2": [("B400", 400), ("B500", 500)],
-    "china": [],  # China requires explicit verified fy.
-}
-
-TEXT = {
-    "fa": {
-        "language": "🌐 <b>زبان / Language</b>",
-        "welcome": "🏗️ <b>Structural Quantity Engine</b>\n\nاستاندارد، مصالح و سپس عضو سازه‌ای را انتخاب کنید.",
-        "standard": "📚 <b>استاندارد پروژه</b>\nاستاندارد مبنا را انتخاب کنید:",
-        "concrete": "🧱 <b>مقاومت بتن</b>\nمقاومت فشاری مشخصه بتن را انتخاب کنید:",
-        "grade": "🔩 <b>گرید میلگرد</b>\nگرید میلگرد پروژه را انتخاب کنید:",
-        "china_fy": "🔩 <b>fy میلگرد چین</b>\nبرای China / GB مقدار fy را به MPa وارد کنید. هیچ مقدار پیش‌فرضی اعمال نمی‌شود.",
-        "project_ready": "✅ <b>پروژه آماده است</b>",
-        "invalid": "❌ مقدار معتبر نیست. دوباره وارد کنید.",
-        "calc_error": "❌ خطا در محاسبه:\n<code>{}</code>",
-        "back": "🔙 بازگشت", "home": "🏠 صفحه اصلی", "cancel": "❌ لغو",
-        "prev": "⬅️ مرحله قبل", "review": "📋 بررسی نهایی", "calculate": "🧮 محاسبه",
-        "edit": "✏️ ویرایش", "show_rebar": "🔩 جزئیات میلگرد", "show_cut": "✂️ Cut List",
-        "new_member": "➕ عضو جدید", "summary": "📊 خلاصه پروژه", "settings": "⚙️ تنظیمات",
-        "help": "ℹ️ راهنما", "equivalency": "🔄 معادل‌سازی میلگرد", "current_count": "تعداد میلگرد فعلی",
-        "current_dia": "قطر میلگرد فعلی", "replacement_dia": "قطر میلگرد جایگزین", "enter_value": "مقدار را وارد کنید:",
-        "equivalent": "سطح مقطع معادل است.", "not_equivalent": "جایگزین انتخاب‌شده از نظر سطح مقطع کافی نیست.",
-        "engineering_warning": "⚠️ این فقط کنترل سطح مقطع است؛ فاصله‌گذاری، حداقل/حداکثر آرماتور، مهاری، وصله و دیتیلینگ باید جداگانه کنترل شود.",
-        "language": "🌐 تغییر زبان", "materials": "🧱 مصالح", "standard_setting": "📚 تغییر استاندارد",
-        "natural": "✍️ ورود طبیعی / هوشمند", "multi_column": "🏢 ستون چندطبقه", "result": "📌 نتیجه",
-    },
-    "en": {
-        "language": "🌐 <b>Language</b>", "welcome": "🏗️ <b>Structural Quantity Engine</b>\n\nChoose project standard, materials, then a structural member.",
-        "standard": "📚 <b>Project Standard</b>\nChoose the governing standard:", "concrete": "🧱 <b>Concrete</b>\nChoose characteristic concrete strength:",
-        "grade": "🔩 <b>Rebar Grade</b>\nChoose the project rebar grade:", "china_fy": "🔩 <b>China rebar fy</b>\nEnter verified fy in MPa. No default is assumed.",
-        "project_ready": "✅ <b>Project is ready</b>", "invalid": "❌ Invalid value. Try again.", "calc_error": "❌ Calculation error:\n<code>{}</code>",
-        "back": "🔙 Back", "home": "🏠 Home", "cancel": "❌ Cancel", "prev": "⬅️ Previous", "review": "📋 Review", "calculate": "🧮 Calculate",
-        "edit": "✏️ Edit", "show_rebar": "🔩 Rebar details", "show_cut": "✂️ Cut List", "new_member": "➕ New member", "summary": "📊 Project summary",
-        "settings": "⚙️ Settings", "help": "ℹ️ Help", "equivalency": "🔄 Rebar equivalency", "current_count": "Current bar count", "current_dia": "Current diameter",
-        "replacement_dia": "Replacement diameter", "enter_value": "Enter value:", "equivalent": "Area is equivalent.", "not_equivalent": "Replacement area is insufficient.",
-        "engineering_warning": "⚠️ Area equivalency only; spacing, minimum/maximum reinforcement, development, splice and detailing require separate checks.",
-        "language": "🌐 Language", "materials": "🧱 Materials", "standard_setting": "📚 Standard", "natural": "✍️ Natural input", "multi_column": "🏢 Multi-story column", "result": "📌 Result",
-    },
-    "ar": {
-        "language": "🌐 <b>اللغة</b>", "welcome": "🏗️ <b>محرك الكميات الإنشائية</b>\n\nاختر المعيار والمواد ثم العنصر الإنشائي.",
-        "standard": "📚 <b>معيار المشروع</b>", "concrete": "🧱 <b>الخرسانة</b>", "grade": "🔩 <b>حديد التسليح</b>", "china_fy": "🔩 أدخل fy الموثق بوحدة MPa.",
-        "project_ready": "✅ <b>المشروع جاهز</b>", "invalid": "❌ قيمة غير صالحة.", "calc_error": "❌ خطأ في الحساب:\n<code>{}</code>",
-        "back": "🔙 رجوع", "home": "🏠 الرئيسية", "cancel": "❌ إلغاء", "prev": "⬅️ السابق", "review": "📋 مراجعة", "calculate": "🧮 حساب",
-        "edit": "✏️ تعديل", "show_rebar": "🔩 تفاصيل التسليح", "show_cut": "✂️ Cut List", "new_member": "➕ عنصر جديد", "summary": "📊 ملخص المشروع",
-        "settings": "⚙️ الإعدادات", "help": "ℹ️ المساعدة", "equivalency": "🔄 معادلة التسليح", "current_count": "العدد الحالي", "current_dia": "القطر الحالي",
-        "replacement_dia": "قطر البديل", "enter_value": "أدخل القيمة:", "equivalent": "المساحة مكافئة.", "not_equivalent": "المساحة غير كافية.",
-        "engineering_warning": "⚠️ هذه معادلة مساحة فقط؛ يجب فحص التباعد والتفاصيل والوصلة والتثبيت منفصلاً.", "language": "🌐 اللغة", "materials": "🧱 المواد", "standard_setting": "📚 المعيار", "natural": "✍️ إدخال طبيعي", "multi_column": "🏢 عمود متعدد الطوابق", "result": "📌 النتيجة",
-    },
-    "zh": {
-        "language": "🌐 <b>语言</b>", "welcome": "🏗️ <b>结构工程量引擎</b>\n\n选择标准、材料和结构构件。", "standard": "📚 <b>项目标准</b>", "concrete": "🧱 <b>混凝土</b>", "grade": "🔩 <b>钢筋等级</b>", "china_fy": "🔩 <b>钢筋 fy</b>\n请输入经验证的 MPa 值，不使用默认值。", "project_ready": "✅ <b>项目已准备</b>", "invalid": "❌ 输入无效。", "calc_error": "❌ 计算错误：\n<code>{}</code>", "back": "🔙 返回", "home": "🏠 首页", "cancel": "❌ 取消", "prev": "⬅️ 上一步", "review": "📋 检查", "calculate": "🧮 计算", "edit": "✏️ 编辑", "show_rebar": "🔩 钢筋明细", "show_cut": "✂️ Cut List", "new_member": "➕ 新构件", "summary": "📊 项目汇总", "settings": "⚙️ 设置", "help": "ℹ️ 帮助", "equivalency": "🔄 钢筋等效", "current_count": "当前数量", "current_dia": "当前直径", "replacement_dia": "替换直径", "enter_value": "请输入：", "equivalent": "面积满足等效条件。", "not_equivalent": "替换面积不足。", "engineering_warning": "⚠️ 仅检查面积等效；间距、锚固、搭接和构造必须单独检查。", "language": "🌐 语言", "materials": "🧱 材料", "standard_setting": "📚 标准", "natural": "✍️ 自然输入", "multi_column": "🏢 多层柱", "result": "📌 结果",
-    },
-}
-
-MEMBER_NAMES = {
-    "iso": "⬛ پی منفرد", "strip": "▬ پی نواری", "raft": "▰ پی گسترده / رادیه",
-    "column_rect": "▯ ستون مستطیلی", "column_round": "◯ ستون گرد", "beam": "📐 تیر", "tie": "🔗 شناژ / کلاف",
-    "wall": "🧱 دیوار", "stair": "🪜 راه‌پله", "roof": "🏠 سقف",
-}
-
-ROOF_TYPES = {
-    "eps": {"name": {"fa": "🟦 سقف تیرچه یونولیتی", "en": "🟦 EPS joist roof", "ar": "🟦 سقف بلوك EPS", "zh": "🟦 EPS 肋梁楼板"}},
-    "clay": {"name": {"fa": "🟫 سقف تیرچه سفالی", "en": "🟫 Clay-block joist roof", "ar": "🟫 سقف بلوك طيني", "zh": "🟫 陶土块肋梁楼板"}},
-    "waffle": {"name": {"fa": "🔳 سقف وافل", "en": "🔳 Waffle slab", "ar": "🔳 سقف وافل", "zh": "🔳 密肋/华夫楼板"}},
-    "slab": {"name": {"fa": "⬜ دال بتنی توپر", "en": "⬜ Solid slab", "ar": "⬜ بلاطة مصمتة", "zh": "⬜ 实心板"}},
-}
-
-# Main wizard fields retained for the original member flow.
-STEPS = {
-    "iso": [("count", {"fa":"تعداد پی","en":"Footing count","ar":"عدد القواعد","zh":"基础数量"}, "int"), ("L", {"fa":"طول پی (m)","en":"Length (m)","ar":"الطول (m)","zh":"长度(m)"}, "float"), ("W", {"fa":"عرض پی (m)","en":"Width (m)","ar":"العرض (m)","zh":"宽度(m)"}, "float"), ("T", {"fa":"ضخامت پی (m)","en":"Thickness (m)","ar":"السماكة (m)","zh":"厚度(m)"}, "float"), ("leanL", {"fa":"طول بتن مگر (m)","en":"Lean length (m)","ar":"طول الخرسانة النظافة","zh":"垫层长度"}, "float"), ("leanW", {"fa":"عرض بتن مگر (m)","en":"Lean width (m)","ar":"عرض خرسانة النظافة","zh":"垫层宽度"}, "float"), ("leanT", {"fa":"ضخامت بتن مگر (m)","en":"Lean thickness (m)","ar":"سماكة خرسانة النظافة","zh":"垫层厚度"}, "float"), ("bd", {"fa":"قطر میلگرد پایین (mm)","en":"Bottom bar diameter (mm)","ar":"قطر التسليح السفلي","zh":"底筋直径"}, "diameter"), ("bs", {"fa":"فاصله میلگرد پایین (mm)","en":"Bottom spacing (mm)","ar":"تباعد التسليح السفلي","zh":"底筋间距"}, "spacing"), ("td", {"fa":"قطر میلگرد بالا (mm)؛ اگر ندارد 0","en":"Top diameter (mm); 0 if none","ar":"قطر علوي؛ 0 عند عدم وجوده","zh":"顶筋直径；无则0"}, "diameter_optional"), ("ts", {"fa":"فاصله میلگرد بالا (mm)؛ اگر ندارد 0","en":"Top spacing (mm); 0 if none","ar":"تباعد علوي؛ 0 عند عدم وجوده","zh":"顶筋间距；无则0"}, "spacing_optional"), ("pl", {"fa":"طول پدستال (m)؛ اگر ندارد 0","en":"Pedestal length (m); 0 if none","ar":"طول البيدستال","zh":"柱墩长度"}, "float"), ("pw", {"fa":"عرض پدستال (m)؛ اگر ندارد 0","en":"Pedestal width (m); 0 if none","ar":"عرض البيدستال","zh":"柱墩宽度"}, "float"), ("ph", {"fa":"ارتفاع پدستال (m)؛ اگر ندارد 0","en":"Pedestal height (m); 0 if none","ar":"ارتفاع البيدستال","zh":"柱墩高度"}, "float")],
-    "strip": [("count", {"fa":"تعداد نوار","en":"Strip count","ar":"عدد الشرائط","zh":"条基数量"}, "int"), ("L", {"fa":"طول نوار (m)","en":"Strip length (m)","ar":"طول الشريط","zh":"长度"}, "float"), ("W", {"fa":"عرض پی (m)","en":"Footing width (m)","ar":"عرض القاعدة","zh":"宽度"}, "float"), ("T", {"fa":"ضخامت پی (m)","en":"Thickness (m)","ar":"السماكة","zh":"厚度"}, "float"), ("leanL", {"fa":"طول بتن مگر (m)","en":"Lean length (m)","ar":"طول النظافة","zh":"垫层长度"}, "float"), ("leanW", {"fa":"عرض بتن مگر (m)","en":"Lean width (m)","ar":"عرض النظافة","zh":"垫层宽度"}, "float"), ("leanT", {"fa":"ضخامت بتن مگر (m)","en":"Lean thickness (m)","ar":"سماكة النظافة","zh":"垫层厚度"}, "float"), ("ld", {"fa":"قطر طولی پایین (mm)","en":"Bottom longitudinal diameter","ar":"قطر التسليح الطولي","zh":"底部纵筋直径"}, "diameter"), ("lc", {"fa":"تعداد طولی پایین","en":"Bottom longitudinal count","ar":"عدد التسليح الطولي","zh":"底部纵筋数量"}, "int"), ("td", {"fa":"قطر عرضی پایین (mm)","en":"Bottom transverse diameter","ar":"قطر التسليح العرضي","zh":"底部横筋直径"}, "diameter"), ("ts", {"fa":"فاصله عرضی پایین (mm)","en":"Bottom transverse spacing","ar":"تباعد العرضي","zh":"底部横筋间距"}, "spacing"), ("tld", {"fa":"قطر طولی بالا (mm)؛ اگر ندارد 0","en":"Top longitudinal diameter; 0 if none","ar":"قطر علوي؛ 0","zh":"顶部纵筋直径；无则0"}, "diameter_optional"), ("tlc", {"fa":"تعداد طولی بالا؛ اگر ندارد 0","en":"Top longitudinal count; 0 if none","ar":"عدد علوي؛ 0","zh":"顶部纵筋数量；无则0"}, "int"), ("ttd", {"fa":"قطر عرضی بالا (mm)؛ اگر ندارد 0","en":"Top transverse diameter; 0 if none","ar":"قطر عرضي علوي؛ 0","zh":"顶部横筋直径；无则0"}, "diameter_optional"), ("tts", {"fa":"فاصله عرضی بالا (mm)؛ اگر ندارد 0","en":"Top transverse spacing; 0 if none","ar":"تباعد عرضي علوي؛ 0","zh":"顶部横筋间距；无则0"}, "spacing_optional")],
-    "raft": [("L", {"fa":"طول رادیه (m)","en":"Raft length (m)","ar":"طول اللبشة","zh":"筏板长度"}, "float"), ("W", {"fa":"عرض رادیه (m)","en":"Raft width (m)","ar":"عرض اللبشة","zh":"筏板宽度"}, "float"), ("T", {"fa":"ضخامت رادیه (m)","en":"Raft thickness (m)","ar":"سماكة اللبشة","zh":"筏板厚度"}, "float"), ("leanL", {"fa":"طول بتن مگر (m)","en":"Lean length","ar":"طول النظافة","zh":"垫层长度"}, "float"), ("leanW", {"fa":"عرض بتن مگر (m)","en":"Lean width","ar":"عرض النظافة","zh":"垫层宽度"}, "float"), ("leanT", {"fa":"ضخامت بتن مگر (m)","en":"Lean thickness","ar":"سماكة النظافة","zh":"垫层厚度"}, "float"), ("bxd", {"fa":"قطر X پایین (mm)","en":"Bottom X diameter","ar":"قطر X السفلي","zh":"底部X直径"}, "diameter"), ("bxs", {"fa":"فاصله X پایین (mm)","en":"Bottom X spacing","ar":"تباعد X السفلي","zh":"底部X间距"}, "spacing"), ("byd", {"fa":"قطر Y پایین (mm)","en":"Bottom Y diameter","ar":"قطر Y السفلي","zh":"底部Y直径"}, "diameter"), ("bys", {"fa":"فاصله Y پایین (mm)","en":"Bottom Y spacing","ar":"تباعد Y السفلي","zh":"底部Y间距"}, "spacing"), ("txd", {"fa":"قطر X بالا (mm)؛ اگر ندارد 0","en":"Top X diameter; 0 if none","ar":"قطر X العلوي؛ 0","zh":"顶部X直径；无则0"}, "diameter_optional"), ("txs", {"fa":"فاصله X بالا (mm)","en":"Top X spacing","ar":"تباعد X العلوي","zh":"顶部X间距"}, "spacing_optional"), ("tyd", {"fa":"قطر Y بالا (mm)؛ اگر ندارد 0","en":"Top Y diameter; 0 if none","ar":"قطر Y العلوي؛ 0","zh":"顶部Y直径；无则0"}, "diameter_optional"), ("tys", {"fa":"فاصله Y بالا (mm)","en":"Top Y spacing","ar":"تباعد Y العلوي","zh":"顶部Y间距"}, "spacing_optional")],
-    "column_rect": [("count", {"fa":"تعداد ستون","en":"Column count","ar":"عدد الأعمدة","zh":"柱数量"}, "int"), ("W", {"fa":"عرض ستون (m)","en":"Width (m)","ar":"العرض","zh":"宽度"}, "float"), ("D", {"fa":"عمق ستون (m)","en":"Depth (m)","ar":"العمق","zh":"深度"}, "float"), ("H", {"fa":"ارتفاع ستون (m)","en":"Height (m)","ar":"الارتفاع","zh":"高度"}, "float"), ("ld", {"fa":"قطر میلگرد طولی (mm)","en":"Longitudinal diameter","ar":"قطر طولي","zh":"纵筋直径"}, "diameter"), ("lc", {"fa":"تعداد میلگرد طولی هر ستون","en":"Longitudinal bars/column","ar":"عدد التسليح الطولي","zh":"每柱纵筋数量"}, "int"), ("sd", {"fa":"قطر خاموت (mm)","en":"Stirrup diameter","ar":"قطر الكانة","zh":"箍筋直径"}, "diameter"), ("ss", {"fa":"فاصله خاموت (mm)","en":"Stirrup spacing","ar":"تباعد الكانات","zh":"箍筋间距"}, "spacing")],
-    "column_round": [("count", {"fa":"تعداد ستون گرد","en":"Round column count","ar":"عدد الأعمدة الدائرية","zh":"圆柱数量"}, "int"), ("D", {"fa":"قطر ستون (m)","en":"Diameter (m)","ar":"القطر","zh":"直径"}, "float"), ("H", {"fa":"ارتفاع ستون (m)","en":"Height (m)","ar":"الارتفاع","zh":"高度"}, "float"), ("ld", {"fa":"قطر میلگرد طولی (mm)","en":"Longitudinal diameter","ar":"قطر طولي","zh":"纵筋直径"}, "diameter"), ("lc", {"fa":"تعداد میلگرد طولی هر ستون","en":"Longitudinal bars/column","ar":"عدد التسليح","zh":"每柱纵筋数量"}, "int"), ("sd", {"fa":"قطر خاموت (mm)","en":"Stirrup diameter","ar":"قطر الكانة","zh":"箍筋直径"}, "diameter"), ("ss", {"fa":"فاصله خاموت (mm)","en":"Stirrup spacing","ar":"تباعد الكانات","zh":"箍筋间距"}, "spacing")],
-    "beam": [("count", {"fa":"تعداد تیر","en":"Beam count","ar":"عدد الجسور","zh":"梁数量"}, "int"), ("L", {"fa":"طول تیر (m)","en":"Length (m)","ar":"الطول","zh":"长度"}, "float"), ("W", {"fa":"عرض تیر (m)","en":"Width (m)","ar":"العرض","zh":"宽度"}, "float"), ("H", {"fa":"ارتفاع تیر (m)","en":"Height (m)","ar":"الارتفاع","zh":"高度"}, "float"), ("bd", {"fa":"قطر میلگرد پایین (mm)","en":"Bottom diameter","ar":"قطر سفلي","zh":"底筋直径"}, "diameter"), ("bc", {"fa":"تعداد میلگرد پایین","en":"Bottom bar count","ar":"عدد سفلي","zh":"底筋数量"}, "int"), ("td", {"fa":"قطر میلگرد بالا (mm)","en":"Top diameter","ar":"قطر علوي","zh":"顶筋直径"}, "diameter"), ("tc", {"fa":"تعداد میلگرد بالا","en":"Top bar count","ar":"عدد علوي","zh":"顶筋数量"}, "int"), ("sd", {"fa":"قطر خاموت (mm)","en":"Stirrup diameter","ar":"قطر الكانة","zh":"箍筋直径"}, "diameter"), ("ss", {"fa":"فاصله خاموت (mm)","en":"Stirrup spacing","ar":"تباعد الكانات","zh":"箍筋间距"}, "spacing")],
-    "tie": [("count", {"fa":"تعداد شناژ/کلاف","en":"Tie count","ar":"عدد الكمرات الرابطة","zh":"系梁数量"}, "int"), ("L", {"fa":"طول (m)","en":"Length (m)","ar":"الطول","zh":"长度"}, "float"), ("W", {"fa":"عرض (m)","en":"Width (m)","ar":"العرض","zh":"宽度"}, "float"), ("H", {"fa":"ارتفاع (m)","en":"Height (m)","ar":"الارتفاع","zh":"高度"}, "float"), ("ld", {"fa":"قطر میلگرد طولی (mm)","en":"Longitudinal diameter","ar":"قطر طولي","zh":"纵筋直径"}, "diameter"), ("lc", {"fa":"تعداد میلگرد طولی","en":"Longitudinal count","ar":"عدد طولي","zh":"纵筋数量"}, "int"), ("sd", {"fa":"قطر خاموت (mm)","en":"Stirrup diameter","ar":"قطر الكانة","zh":"箍筋直径"}, "diameter"), ("ss", {"fa":"فاصله خاموت (mm)","en":"Stirrup spacing","ar":"تباعد الكانات","zh":"箍筋间距"}, "spacing")],
-    "wall": [("L", {"fa":"طول دیوار (m)","en":"Wall length","ar":"طول الجدار","zh":"墙长"}, "float"), ("H", {"fa":"ارتفاع دیوار (m)","en":"Wall height","ar":"ارتفاع الجدار","zh":"墙高"}, "float"), ("T", {"fa":"ضخامت دیوار (m)","en":"Wall thickness","ar":"سماكة الجدار","zh":"墙厚"}, "float"), ("vd", {"fa":"قطر میلگرد قائم (mm)","en":"Vertical diameter","ar":"قطر رأسي","zh":"竖筋直径"}, "diameter"), ("vs", {"fa":"فاصله میلگرد قائم (mm)","en":"Vertical spacing","ar":"تباعد رأسي","zh":"竖筋间距"}, "spacing"), ("hd", {"fa":"قطر میلگرد افقی (mm)","en":"Horizontal diameter","ar":"قطر أفقي","zh":"水平筋直径"}, "diameter"), ("hs", {"fa":"فاصله میلگرد افقی (mm)","en":"Horizontal spacing","ar":"تباعد أفقي","zh":"水平筋间距"}, "spacing")],
-    "stair": [("L", {"fa":"طول شیب/دال (m)","en":"Slab/sloping length","ar":"طول الدرج","zh":"斜板长度"}, "float"), ("W", {"fa":"عرض راه‌پله (m)","en":"Stair width","ar":"عرض الدرج","zh":"楼梯宽度"}, "float"), ("T", {"fa":"ضخامت دال (m)","en":"Slab thickness","ar":"سماكة الدرج","zh":"板厚"}, "float"), ("md", {"fa":"قطر میلگرد اصلی (mm)","en":"Main diameter","ar":"قطر رئيسي","zh":"主筋直径"}, "diameter"), ("ms", {"fa":"فاصله میلگرد اصلی (mm)","en":"Main spacing","ar":"تباعد رئيسي","zh":"主筋间距"}, "spacing"), ("dd", {"fa":"قطر میلگرد توزیعی (mm)","en":"Distribution diameter","ar":"قطر توزيع","zh":"分布筋直径"}, "diameter"), ("ds", {"fa":"فاصله میلگرد توزیعی (mm)","en":"Distribution spacing","ar":"تباعد توزيع","zh":"分布筋间距"}, "spacing"), ("steps", {"fa":"تعداد پله","en":"Steps","ar":"عدد الدرجات","zh":"踏步数"}, "int"), ("riser", {"fa":"ارتفاع رایزر (m)","en":"Riser (m)","ar":"ارتفاع القائمة","zh":"踢面高"}, "float"), ("tread", {"fa":"کف پله (m)","en":"Tread (m)","ar":"عرض النائمة","zh":"踏面宽"}, "float")],
-}
-
-ROOF_STEPS = {
-    "eps": [
-        ("span_m", "دهانه سقف (m)", "float"), ("width_m", "عرض سقف (m)", "float"), ("joist_spacing_mm", "فاصله تیرچه (mm)", "spacing"),
-        ("eps_length_m", "طول بلوک یونولیت (m)", "float"), ("eps_width_m", "عرض بلوک یونولیت (m)", "float"), ("eps_height_m", "ارتفاع بلوک (m)", "float"),
-        ("joist_length_m", "طول تیرچه (m)؛ 0 برای برابر دهانه", "float0"), ("joist_count", "تعداد تیرچه؛ 0 برای محاسبه هندسی", "int0"),
-        ("thermal_dia_mm", "قطر میلگرد حرارتی (mm)؛ 0 برای عدم ورود", "diameter_optional"), ("thermal_spacing_mm", "فاصله حرارتی (mm)", "spacing_optional"),
-        ("transverse_dia_mm", "قطر کلاف عرضی (mm)؛ 0 برای عدم ورود", "diameter_optional"), ("transverse_count", "تعداد کلاف عرضی؛ 0 برای عدم ورود", "int0"),
-        ("concrete_topping_thickness_m", "ضخامت بتن رویه (m)", "float"), ("block_count", "تعداد بلوک؛ 0 برای محاسبه هندسی", "int0"),
-    ],
-    "clay": [
-        ("span_m", "دهانه سقف (m)", "float"), ("width_m", "عرض سقف (m)", "float"), ("joist_spacing_mm", "فاصله تیرچه (mm)", "spacing"),
-        ("block_length_m", "طول بلوک سفالی (m)", "float"), ("block_width_m", "عرض بلوک سفالی (m)", "float"), ("block_height_m", "ارتفاع بلوک (m)", "float"),
-        ("joist_length_m", "طول تیرچه (m)؛ 0 برای برابر دهانه", "float0"), ("joist_count", "تعداد تیرچه؛ 0 برای محاسبه هندسی", "int0"),
-        ("thermal_dia_mm", "قطر میلگرد حرارتی (mm)؛ 0 برای عدم ورود", "diameter_optional"), ("thermal_spacing_mm", "فاصله حرارتی (mm)", "spacing_optional"),
-        ("transverse_dia_mm", "قطر کلاف عرضی (mm)؛ 0 برای عدم ورود", "diameter_optional"), ("transverse_count", "تعداد کلاف عرضی؛ 0 برای عدم ورود", "int0"),
-        ("concrete_topping_thickness_m", "ضخامت بتن رویه (m)", "float"), ("block_count", "تعداد بلوک؛ 0 برای محاسبه هندسی", "int0"),
-    ],
-    "waffle": [("length_m","طول سقف (m)","float"),("width_m","عرض سقف (m)","float"),("module_length_m","طول مدول وافل (m)","float"),("module_width_m","عرض مدول وافل (m)","float"),("depth_m","عمق وافل (m)","float"),("top_slab_thickness_m","ضخامت دال رویه (m)","float"),("main_dia_mm","قطر میلگرد اصلی (mm)","diameter"),("main_spacing_mm","فاصله میلگرد اصلی (mm)","spacing"),("dist_dia_mm","قطر میلگرد توزیعی (mm)","diameter"),("dist_spacing_mm","فاصله میلگرد توزیعی (mm)","spacing")],
-    "slab": [("length_m","طول دال (m)","float"),("width_m","عرض دال (m)","float"),("thickness_m","ضخامت دال (m)","float"),("main_dia_mm","قطر میلگرد اصلی (mm)","diameter"),("main_spacing_mm","فاصله میلگرد اصلی (mm)","spacing"),("dist_dia_mm","قطر میلگرد توزیعی (mm)","diameter"),("dist_spacing_mm","فاصله میلگرد توزیعی (mm)","spacing")],
-}
-
-
-def kb(rows):
-    return InlineKeyboardMarkup([[InlineKeyboardButton(str(t), callback_data=str(d)) for t, d in row] for row in rows])
-
-
-def language_keyboard():
-    return kb([[('🇮🇷 فارسی','lang_fa'),('🇬🇧 English','lang_en')],[('🇸🇦 العربية','lang_ar'),('🇨🇳 中文','lang_zh')]])
-
-
-def standard_keyboard(lang):
-    return kb([[(info[lang], f'std_{key}')] for key, info in STANDARDS.items()])
-
-
-def concrete_keyboard(lang):
-    return kb([[('C'+str(v), f'fc_{v}') for v in CONCRETE_OPTIONS]])
-
-
-def rebar_grade_keyboard(lang):
-    std = contextless_standard = None
-    return kb([])  # replaced by choose_grade_screen()
-
-
-def grade_keyboard(lang, standard):
-    opts = REBAR_OPTIONS.get(standard, [])
-    rows = [[(name, f'grade_{name.replace(" ", "")}') for name, _ in opts]]
-    if standard == 'china':
-        rows = [[('✍️ fy (MPa)', 'grade_china_custom')]]
-    return kb(rows + [[(TEXT[lang]['back'], 'home')]])
-
-
-def main_menu(lang):
-    t = TEXT[lang]
-    return kb([
-        [('🧱 فونداسیون','foundation'),('🏛️ ستون‌ها','columns')],
-        [('📐 تیرها','beams'),('🏠 سقف‌ها','roofs')],
-        [('🔗 شناژ/کلاف','ties'),('🧱 دیوارها','walls')],
-        [('🪜 راه‌پله','stairs'),('🔄 معادل‌سازی','equiv')],
-        [(t['natural'],'natural_input'),(t['multi_column'],'multi_column')],
-        [(t['summary'],'summary'),(t['settings'],'settings')],
-        [(t['help'],'help'),(t['language'],'language')],
-    ])
-
-
-def back_kb(lang, callback='home'):
-    return kb([[(TEXT[lang]['back'], callback)]])
-
-
-def _preset_values(typ, key):
-    # Common engineering inputs: shortcuts reduce typing without hiding manual entry.
-    if typ in ('diameter','diameter_optional') or 'dia' in key.lower():
-        vals=[8,10,12,14,16,18,20,22,25,28,32]
-        return [(f'Φ{v}', v) for v in vals]
-    if typ in ('spacing','spacing_optional') or 'spacing' in key.lower():
-        vals=[10,12,15,20,25,30,40,50,100,150,200]
-        return [(f'{v} mm', v) for v in vals]
-    if typ in ('int','int0') or key in ('count','lc','tlc','transverse_count','joist_count','block_count','steps','floors'):
-        vals=[1,2,3,4,6,8,10,12,16,20]
-        return [(str(v), v) for v in vals]
-    # Length / thickness / dimensions: compact set of common values in metres.
-    if typ == 'float':
-        vals=[0.10,0.15,0.20,0.25,0.30,0.40,0.50,0.60,0.80,1.00,1.50,2.00,3.00,4.00,5.00,6.00]
-        return [(f'{v:g}', v) for v in vals]
-    return []
-
-def step_kb(lang, kind=None, idx=None, roof=False):
-    rows=[]
-    fields = ROOF_STEPS.get(kind, []) if roof else STEPS.get(kind, [])
-    if fields and idx is not None and 0 <= idx < len(fields):
-        key, _label, typ = fields[idx]
-        presets=_preset_values(typ,key)
-        for i in range(0,len(presets),4):
-            rows.append([(str(label),f'preset_{value}') for label,value in presets[i:i+4]])
-        if typ in ('diameter_optional','spacing_optional','int0'):
-            rows.append([('0','preset_0')])
-        rows.append([('⌨️ ورود دستی','manual_input')])
-    rows.append([(TEXT[lang]['prev'],'prev'),(TEXT[lang]['cancel'],'cancel')])
-    return kb(rows)
-
-
-def review_kb(lang):
-    return kb([[(TEXT[lang]['calculate'],'do_calculate'),(TEXT[lang]['edit'],'edit_member')],[(TEXT[lang]['cancel'],'cancel')]])
-
-
-def result_kb(lang):
-    return kb([[(TEXT[lang]['show_rebar'],'show_rebar'),(TEXT[lang]['show_cut'],'show_cut')],[(TEXT[lang]['new_member'],'new_member'),(TEXT[lang]['summary'],'summary')],[(TEXT[lang]['home'],'home')]])
-
-
-def section_kb(lang, items):
-    return kb([[x for x in items]])
-
-
-def normalize_number(text):
-    s = str(text).strip()
-    trans = str.maketrans('۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩', '01234567890123456789')
-    s = s.translate(trans).replace(',', '.').replace('٫', '.')
-    if s.count('/') == 1:
-        s = s.replace('/', '.')
-    return s
-
-
-def parse_number(text, integer=False):
-    s = normalize_number(text)
-    x = float(s)
-    if not math.isfinite(x):
-        raise ValueError('Non-finite number is not allowed.')
-    if x < 0:
-        raise ValueError('Negative value is not allowed.')
-    if integer:
-        if not x.is_integer():
-            raise ValueError('Integer required.')
-        return int(x)
-    return x
-
-
-def project_standard(context):
-    return context.user_data.get('standard')
-
-
-def project_fc(context):
-    return float(context.user_data.get('fc', 25))
-
-
-def project_fy(context):
-    return float(context.user_data.get('fy'))
-
-
-def project_grade(context):
-    return str(context.user_data.get('rebar_grade', ''))
-
-
-def project_ready(context):
-    return bool(context.user_data.get('standard') and context.user_data.get('fc') and context.user_data.get('fy'))
-
-
-def prompt_text(lang, label, i, total):
-    return f"📐 <b>{escape(label)}</b>\n\n{TEXT[lang]['enter_value']}\n\n📍 <b>{i}</b> / <b>{total}</b>"
-
-
-def field_label(field, lang):
-    return field[1].get(lang, field[1].get('en', field[0])) if isinstance(field[1], dict) else str(field[1])
-
-
-def format_value(v):
-    return f'{v:g}' if isinstance(v, float) else str(v)
-
-
-def review_text_with_context(context, kind, values, lang):
-    lines = [f"📋 <b>{escape(MEMBER_NAMES.get(kind, kind))}</b>", '', '<pre>']
-    for key, label, typ in STEPS.get(kind, []):
-        if key in values:
-            lines.append(f'{field_label((key,label,typ),lang):<28} {format_value(values[key])}')
-    lines += ['</pre>', '', f"📚 {escape(STANDARDS[project_standard(context)][lang])}", f"🧱 C{project_fc(context):g}", f"🔩 {escape(project_grade(context))}"]
-    return '\n'.join(lines)
-
-
-def review_roof(context, roof_type, values, lang):
-    lines = [f"📋 <b>{escape(ROOF_TYPES[roof_type]['name'][lang])}</b>", '', '<pre>']
-    for key, label, typ in ROOF_STEPS[roof_type]:
-        if key in values:
-            lines.append(f'{label:<36} {format_value(values[key])}')
-    lines += ['</pre>', '', f"📚 {escape(STANDARDS[project_standard(context)][lang])}", f"🧱 C{project_fc(context):g}", f"🔩 {escape(project_grade(context))}"]
-    return '\n'.join(lines)
-
-
-def summary_text(kind, result, lang):
-    name = MEMBER_NAMES.get(kind, kind)
-    concrete = float(result.get('total_concrete_m3', result.get('concrete_m3', 0)) or 0)
-    rebar = float(result.get('total_rebar_kg', 0) or 0)
-    waste = float(result.get('total_rebar_waste_m', 0) or 0)
-    lines = [f"📌 <b>{TEXT[lang]['result']}</b>", '', f'<b>{escape(name)}</b>', '', '<pre>', f'Concrete      {concrete:>10.3f} m³', f'Rebar         {rebar:>10.1f} kg', f'12m stock     {int(result.get("total_stock_bars_12m",0) or 0):>10d}', f'Offcut waste   {waste:>10.2f} m']
-    if kind == 'iso':
-        lines += [f'Lean concrete {float(result.get("lean_concrete_m3",0) or 0):>10.3f} m³', f'Footing        {float(result.get("footing_concrete_m3",0) or 0):>10.3f} m³', f'Pedestal       {float(result.get("pedestal_concrete_m3",0) or 0):>10.3f} m³']
-    used_len=sum(float(x.get('length_m',0) or 0)*int(x.get('piece_count',0) or 0) for x in result.get('rebar_details',[]) if isinstance(x,dict))
-    waste_pct=(waste/used_len*100.0) if used_len>0 else 0.0
-    lines += [f'Rebar used    {used_len:>10.2f} m', f'Waste ratio   {waste_pct:>10.2f} %', '</pre>', '', '⚠️ خروجی برای برآورد مقادیر و برنامه‌ریزی آرماتور است و جایگزین طراحی نهایی سازه نیست.']
-    return '\n'.join(lines)
-
-
-def rebar_text(details, lang='fa'):
-    if not details:
-        return f"🔩 <b>{TEXT[lang]['show_rebar']}</b>\n\nNo rebar detail."
-    lines = [f"🔩 <b>{TEXT[lang]['show_rebar']}</b>", '', '<pre>', 'Dia  Pieces   Length(m)   Weight(kg)  12m', '--------------------------------------------']
-    for x in details:
-        lines.append(f"Φ{int(x.get('diameter_mm',0)):<3} {int(x.get('piece_count',0)):>6} {float(x.get('length_m',0)):>12.2f} {float(x.get('weight_kg',0)):>11.1f} {int(x.get('bars_12m',0)):>5}")
-    lines += ['</pre>']
-    return '\n'.join(lines)
-
-
-def cut_text(details, lang='fa'):
-    if not details:
-        return f"✂️ <b>{TEXT[lang]['show_cut']}</b>\n\nNo cut plan."
-    chunks = [f"✂️ <b>{TEXT[lang]['show_cut']}</b>", '']
-    for x in details:
-        dia = int(x.get('diameter_mm',0)); plans = x.get('cut_plan', [])
-        chunks.append(f'<b>Φ{dia}</b> — {int(x.get("bars_12m",len(plans)))} × 12m')
-        chunks.append('<pre>')
-        for i, p in enumerate(plans[:30], 1):
-            pieces = ' + '.join(f'{float(v):.2f}' for v in p.get('pieces', []))
-            chunks.append(f'{i:02d}) {pieces} = {float(p.get("used_m",0)):.2f} | waste {float(p.get("waste_m",0)):.2f}')
-        if len(plans) > 30: chunks.append(f'... {len(plans)-30} more')
-        chunks.append('</pre>')
-    return '\n'.join(chunks)
-
-
-def project_summary_text(context, lang):
-    items = context.user_data.get('project_results', [])
-    agg = aggregate_project_results([x.get('result',{}) for x in items if isinstance(x,dict)])
-    return (f"📊 <b>{TEXT[lang]['summary']}</b>\n\n<pre>"
-            f"Members       {agg.get('member_count',0):>8d}\n"
-            f"Concrete      {agg.get('total_concrete_m3',0):>8.3f} m³\n"
-            f"Rebar         {agg.get('total_rebar_kg',0):>8.1f} kg\n"
-            f"12m stock     {agg.get('total_stock_bars_12m',0):>8d}\n"
-            f"Offcut waste  {agg.get('total_rebar_waste_m',0):>8.2f} m"
-            f"</pre>")
-
-
-def calculate(context, kind, v):
-    if kind == 'iso':
-        return isolated_footing(int(v['count']),v['L'],v['W'],v['T'],v['leanL'],v['leanW'],v['leanT'],int(v['bd']),v['bs'],int(v['td']) if v['td']>0 else None,v['ts'] if v['td']>0 and v['ts']>0 else None,40,0,v['pl'],v['pw'],v['ph'])
-    if kind == 'strip':
-        return strip_footing(int(v['count']),v['L'],v['W'],v['T'],v['leanL'],v['leanW'],v['leanT'],int(v['ld']),int(v['lc']),int(v['td']),v['ts'],int(v['tld']) if v['tld']>0 else None,int(v['tlc']) if v['tlc']>0 else None,int(v['ttd']) if v['ttd']>0 else None,v['tts'] if v['ttd']>0 and v['tts']>0 else None,40,0)
-    if kind == 'raft':
-        return raft_foundation(v['L'],v['W'],v['T'],v['leanL'],v['leanW'],v['leanT'],int(v['bxd']),v['bxs'],int(v['byd']),v['bys'],int(v['txd']) if v['txd']>0 else None,v['txs'] if v['txd']>0 and v['txs']>0 else None,int(v['tyd']) if v['tyd']>0 else None,v['tys'] if v['tyd']>0 and v['tys']>0 else None,40,0)
-    if kind == 'column_rect': return column_rectangular(int(v['count']),v['W'],v['D'],v['H'],int(v['ld']),int(v['lc']),int(v['sd']),v['ss'],40)
-    if kind == 'column_round': return column_round(int(v['count']),v['D'],v['H'],int(v['ld']),int(v['lc']),int(v['sd']),v['ss'],40)
-    if kind == 'beam': return beam(int(v['count']),v['L'],v['W'],v['H'],int(v['bd']),int(v['bc']),int(v['td']),int(v['tc']),int(v['sd']),v['ss'],40)
-    if kind == 'tie': return tie_beam(int(v['count']),v['L'],v['W'],v['H'],int(v['ld']),int(v['lc']),int(v['sd']),v['ss'],40)
-    if kind == 'wall': return wall_concrete(v['L'],v['H'],v['T'],int(v['vd']),v['vs'],int(v['hd']),v['hs'],40)
-    if kind == 'stair': return stair_slab(v['L'],v['W'],v['T'],int(v['md']),v['ms'],int(v['dd']),v['ds'],int(v['steps']),v['riser'],v['tread'])
-    raise ValueError(f'Unknown member kind: {kind}')
-
-
-def roof_calculate(context, roof_type, v):
-    if roof_type == 'eps':
-        kw = dict(span_m=v['span_m'],width_m=v['width_m'],joist_spacing_mm=v['joist_spacing_mm'],eps_length_m=v['eps_length_m'],eps_width_m=v['eps_width_m'],eps_height_m=v['eps_height_m'],joist_length_m=(v['joist_length_m'] or None),joist_count=(v['joist_count'] or None),thermal_dia_mm=(v['thermal_dia_mm'] or None),thermal_spacing_mm=(v['thermal_spacing_mm'] or None),transverse_dia_mm=(v['transverse_dia_mm'] or None),transverse_count=(v['transverse_count'] or None),concrete_topping_thickness_m=v['concrete_topping_thickness_m'],block_count=(v['block_count'] or None))
-        return joist_eps_roof_detail(**kw)
-    if roof_type == 'clay':
-        kw = dict(span_m=v['span_m'],width_m=v['width_m'],joist_spacing_mm=v['joist_spacing_mm'],block_length_m=v['block_length_m'],block_width_m=v['block_width_m'],block_height_m=v['block_height_m'],joist_length_m=(v['joist_length_m'] or None),joist_count=(v['joist_count'] or None),thermal_dia_mm=(v['thermal_dia_mm'] or None),thermal_spacing_mm=(v['thermal_spacing_mm'] or None),transverse_dia_mm=(v['transverse_dia_mm'] or None),transverse_count=(v['transverse_count'] or None),concrete_topping_thickness_m=v['concrete_topping_thickness_m'],block_count=(v['block_count'] or None))
-        return joist_clay_roof_detail(**kw)
-    if roof_type == 'waffle':
-        return waffle_roof_detail(length_m=v['length_m'],width_m=v['width_m'],module_length_m=v['module_length_m'],module_width_m=v['module_width_m'],depth_m=v['depth_m'],top_slab_thickness_m=v['top_slab_thickness_m'],main_dia_mm=int(v['main_dia_mm']),main_spacing_mm=v['main_spacing_mm'],dist_dia_mm=int(v['dist_dia_mm']),dist_spacing_mm=v['dist_spacing_mm'])
-    if roof_type == 'slab':
-        return solid_slab_roof_detail(length_m=v['length_m'],width_m=v['width_m'],thickness_m=v['thickness_m'],main_dia_mm=int(v['main_dia_mm']),main_spacing_mm=v['main_spacing_mm'],dist_dia_mm=int(v['dist_dia_mm']),dist_spacing_mm=v['dist_spacing_mm'])
-    raise ValueError('Unsupported roof system.')
-
-
-async def start_project_setup(q, context):
-    context.user_data.setdefault('project_results', [])
-    await q.edit_message_text(TEXT[context.user_data.get('lang','fa')]['standard'],parse_mode='HTML',reply_markup=standard_keyboard(context.user_data.get('lang','fa')))
-
-
-async def choose_standard(update, context):
-    q=update.callback_query; data=q.data or ''; lang=context.user_data.get('lang','fa')
-    std=data[4:]
-    if std not in STANDARDS: raise ValueError('Unsupported standard.')
-    context.user_data['standard']=normalize_standard(std)
-    await q.edit_message_text(TEXT[lang]['concrete'],parse_mode='HTML',reply_markup=concrete_keyboard(lang))
-
-
-async def choose_concrete(update, context):
-    q=update.callback_query; lang=context.user_data.get('lang','fa')
-    fc=parse_number(q.data[3:], integer=False)
-    context.user_data['fc']=fc
-    std=project_standard(context)
-    await q.edit_message_text(TEXT[lang]['grade'],parse_mode='HTML',reply_markup=grade_keyboard(lang,std))
-
-
-async def choose_grade(update, context):
-    q=update.callback_query; lang=context.user_data.get('lang','fa'); raw=q.data[6:]
-    std=project_standard(context)
-    if raw == 'china_custom':
-        context.user_data['awaiting_fy']=True
-        return await q.edit_message_text(TEXT[lang]['china_fy'],parse_mode='HTML',reply_markup=back_kb(lang))
-    grade=raw.replace('Grade','Grade ').replace('B400','B400').replace('B500','B500')
-    # Restore display names for A2/A3/A4 and Grade40/Grade60.
-    if std == 'aci318' and raw in ('Grade40','Grade60'): grade=raw[:5]+' '+raw[5:]
-    try: fy=rebar_grade_yield_mpa(std,grade)
-    except Exception as exc: return await q.edit_message_text(TEXT[lang]['calc_error'].format(escape(str(exc))),parse_mode='HTML',reply_markup=back_kb(lang))
-    context.user_data.update(rebar_grade=grade,fy=float(fy),project_results=[])
-    await q.edit_message_text(TEXT[lang]['project_ready']+f"\n\n📚 {escape(STANDARDS[std][lang])}\n🧱 C{project_fc(context):g}\n🔩 {escape(grade)} / fy={fy:g} MPa",parse_mode='HTML',reply_markup=main_menu(lang))
-
-
-async def begin_wizard(update, context, kind):
-    q=update.callback_query; lang=context.user_data.get('lang','fa')
-    if not project_ready(context): return await start_project_setup(q,context)
-    context.user_data.update(kind=kind,step_index=0,values={},history=[])
-    fields=STEPS[kind]; _,label,typ=fields[0]
-    await q.edit_message_text(prompt_text(lang,field_label(fields[0],lang),1,len(fields)),parse_mode='HTML',reply_markup=step_kb(lang,kind,0))
-
-
-async def receive(update, context):
-    lang=context.user_data.get('lang','fa'); kind=context.user_data.get('kind'); index=context.user_data.get('step_index')
-    if kind is None or index is None:
-        await update.message.reply_text(TEXT[lang]['welcome'],parse_mode='HTML',reply_markup=main_menu(lang)); return
-    fields=STEPS[kind]; key,label,typ=fields[index]
+V31_PROJECT_LIMIT = 200
+V31_MEMBER_LIMIT = 5000
+V31_FILE_LIMIT_MB = 20
+V31_CALLBACK_GUARD_SECONDS = 1.25
+V31_CALC_CACHE_LIMIT = 256
+V31_EXPORT_TTL_SECONDS = 1800
+V31_STOCK_LENGTH = 12.0
+
+_V31_CALC_CACHE = {}
+_V31_CACHE_ORDER = []
+
+_V31_LAST_CALLBACK = {}
+_V31_LAST_SCREEN = {}
+_V31_EXPORT_FILES = {}
+
+# ============================================================
+# TIME
+# ============================================================
+
+def v31_now():
+    return (
+        datetime.utcnow()
+        .replace(microsecond=0)
+        .isoformat()
+        + "Z"
+    )
+
+
+# ============================================================
+# SAFE NAME
+# ============================================================
+
+def v31_safe_name(
+    value,
+    fallback="project"
+):
+    text = str(value or "").strip()
+
+    text = re.sub(
+        r"[^\w\-\.\u0600-\u06ff ]+",
+        "_",
+        text,
+        flags=re.UNICODE
+    )
+
+    text = re.sub(
+        r"\s+",
+        "_",
+        text
+    )
+
+    text = text.strip("._")
+
+    return text[:80] or fallback
+
+
+# ============================================================
+# USER ID
+# ============================================================
+
+def v31_user_id(context):
     try:
-        integer=typ in ('int','diameter','diameter_optional','spacing','spacing_optional','int0')
-        value=parse_number(update.message.text,integer=integer)
-        if typ=='diameter' and value==0: raise ValueError('Diameter must be positive.')
-        if typ=='spacing' and value==0: raise ValueError('Spacing must be positive.')
+        return str(context._user_id)
     except Exception:
-        await update.message.reply_text(TEXT[lang]['invalid'],reply_markup=step_kb(lang,kind,index)); return
-    context.user_data['values'][key]=value; context.user_data['history'].append(index)
-    nxt=index+1
-    if nxt<len(fields):
-        context.user_data['step_index']=nxt
-        await update.message.reply_text(prompt_text(lang,field_label(fields[nxt],lang),nxt+1,len(fields)),parse_mode='HTML',reply_markup=step_kb(lang,kind,nxt)); return
-    context.user_data['step_index']=None
-    await update.message.reply_text(review_text_with_context(context,kind,context.user_data['values'],lang),parse_mode='HTML',reply_markup=review_kb(lang))
+        pass
 
-
-async def begin_roof(update, context, roof_type):
-    q=update.callback_query; lang=context.user_data.get('lang','fa')
-    if not project_ready(context): return await start_project_setup(q,context)
-    context.user_data.update(kind='roof',roof_type=roof_type,roof_name=ROOF_TYPES[roof_type]['name'][lang],roof_step_index=0,roof_values={})
-    f=ROOF_STEPS[roof_type][0]
-    await q.edit_message_text(f"🏠 <b>{escape(context.user_data['roof_name'])}</b>\n\n{prompt_text(lang,f[1],1,len(ROOF_STEPS[roof_type]))}",parse_mode='HTML',reply_markup=step_kb(lang,roof_type,0,True))
-
-
-async def receive_roof(update, context):
-    lang=context.user_data.get('lang','fa'); rt=context.user_data.get('roof_type'); idx=context.user_data.get('roof_step_index')
-    fields=ROOF_STEPS.get(rt,[])
-    if rt is None or idx is None: return False
-    key,label,typ=fields[idx]
     try:
-        integer=typ in ('diameter','diameter_optional','spacing','spacing_optional','int0')
-        value=parse_number(update.message.text,integer=integer)
+        return str(
+            context.user_data.get(
+                "_user_id",
+                "anonymous"
+            )
+        )
     except Exception:
-        await update.message.reply_text(TEXT[lang]['invalid'],reply_markup=step_kb(lang,rt,context.user_data.get('roof_step_index'),True)); return True
-    context.user_data['roof_values'][key]=value
-    nxt=idx+1
-    if nxt<len(fields):
-        context.user_data['roof_step_index']=nxt
-        f=fields[nxt]
-        await update.message.reply_text(prompt_text(lang,f[1],nxt+1,len(fields)),parse_mode='HTML',reply_markup=step_kb(lang,rt,context.user_data.get('roof_step_index'),True)); return True
-    context.user_data['roof_step_index']=None
-    await update.message.reply_text(review_roof(context,rt,context.user_data['roof_values'],lang),parse_mode='HTML',reply_markup=review_kb(lang)); return True
+        return "anonymous"
 
 
-async def do_calculate(update, context):
-    q=update.callback_query; await q.answer(); lang=context.user_data.get('lang','fa')
+# ============================================================
+# PROJECT ID
+# ============================================================
+
+def v31_project_id(context):
+
+    pid = context.user_data.get(
+        "project_id"
+    )
+
+    if not pid:
+
+        seed = (
+            f"{v31_user_id(context)}:"
+            f"{time.time_ns()}"
+        )
+
+        pid = hashlib.sha1(
+            seed.encode("utf-8")
+        ).hexdigest()[:12]
+
+        context.user_data[
+            "project_id"
+        ] = pid
+
+    return str(pid)
+
+
+# ============================================================
+# PROJECT NAME
+# ============================================================
+
+def v31_project_name(context):
+
+    return str(
+        context.user_data.get(
+            "project_name"
+        )
+        or
+        f"Project_{v31_project_id(context)}"
+    )
+
+
+# ============================================================
+# PROJECT PATH
+# ============================================================
+
+def v31_project_path(
+    context,
+    project_id=None
+):
+
+    uid = v31_safe_name(
+        v31_user_id(context),
+        "user"
+    )
+
+    pid = v31_safe_name(
+        project_id or v31_project_id(context),
+        "project"
+    )
+
+    folder = V31_ROOT / uid
+
+    folder.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    return (
+        folder /
+        f"{pid}.json"
+    )
+
+
+# ============================================================
+# DEEP COPY
+# ============================================================
+
+def v31_deepcopy(value):
+
     try:
-        if context.user_data.get('kind')=='roof':
-            rt=context.user_data['roof_type']; result=roof_calculate(context,rt,context.user_data['roof_values']); kind='roof'
-            values=dict(context.user_data['roof_values']); values['roof_type']=rt
+        return copy.deepcopy(value)
+
+    except Exception:
+
+        return json.loads(
+            json.dumps(
+                value,
+                ensure_ascii=False,
+                default=str
+            )
+        )
+
+
+# ============================================================
+# JSON SAFE
+# ============================================================
+
+def v31_jsonable(value):
+
+    if isinstance(value, dict):
+
+        return {
+            str(k): v31_jsonable(v)
+            for k, v in value.items()
+        }
+
+    if isinstance(
+        value,
+        (list, tuple)
+    ):
+
+        return [
+            v31_jsonable(x)
+            for x in value
+        ]
+
+    if isinstance(value, set):
+
+        return [
+            v31_jsonable(x)
+            for x in sorted(
+                value,
+                key=str
+            )
+        ]
+
+    if (
+        isinstance(value, float)
+        and not math.isfinite(value)
+    ):
+
+        return None
+
+    if isinstance(
+        value,
+        (
+            str,
+            int,
+            float,
+            bool
+        )
+    ) or value is None:
+
+        return value
+
+    return str(value)
+
+
+# ============================================================
+# PROJECT PAYLOAD
+# ============================================================
+
+def v31_project_payload(context):
+
+    data = v31_deepcopy(
+        dict(
+            context.user_data
+        )
+    )
+
+    transient = {
+        "history",
+        "step_index",
+        "roof_step_index",
+        "awaiting_fy",
+        "natural_mode",
+        "multi_mode",
+        "equiv_step",
+        "equiv",
+        "manual_input",
+        "_v31_busy",
+        "_v31_last_callback",
+    }
+
+    for key in transient:
+        data.pop(
+            key,
+            None
+        )
+
+    data["project_id"] = (
+        v31_project_id(context)
+    )
+
+    data["project_name"] = (
+        v31_project_name(context)
+    )
+
+    data["saved_at"] = v31_now()
+
+    data["schema_version"] = (
+        V31_VERSION
+    )
+
+    return v31_jsonable(
+        data
+    )
+
+
+# ============================================================
+# ATOMIC WRITE
+# ============================================================
+
+def v31_atomic_write(
+    path,
+    payload
+):
+
+    path = Path(path)
+
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    fd, tmp = tempfile.mkstemp(
+        prefix=".project_",
+        suffix=".tmp",
+        dir=str(path.parent)
+    )
+
+    try:
+
+        with os.fdopen(
+            fd,
+            "w",
+            encoding="utf-8"
+        ) as fh:
+
+            json.dump(
+                payload,
+                fh,
+                ensure_ascii=False,
+                indent=2,
+                default=str
+            )
+
+            fh.flush()
+
+            os.fsync(
+                fh.fileno()
+            )
+
+        os.replace(
+            tmp,
+            path
+        )
+
+    finally:
+
+        if os.path.exists(tmp):
+
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+# ============================================================
+# SAVE PROJECT
+# ============================================================
+
+def v31_save_project(
+    context,
+    reason="manual"
+):
+
+    payload = v31_project_payload(
+        context
+    )
+
+    payload["save_reason"] = reason
+
+    path = v31_project_path(
+        context
+    )
+
+    v31_atomic_write(
+        path,
+        payload
+    )
+
+    context.user_data[
+        "last_saved_at"
+    ] = payload["saved_at"]
+
+    context.user_data[
+        "project_dirty"
+    ] = False
+
+    return path
+
+
+# ============================================================
+# MARK DIRTY
+# ============================================================
+
+def v31_mark_dirty(context):
+
+    context.user_data[
+        "project_dirty"
+    ] = True
+
+    context.user_data[
+        "updated_at"
+    ] = v31_now()
+
+
+# ============================================================
+# LOAD PROJECT
+# ============================================================
+
+def v31_load_project(
+    context,
+    payload
+):
+
+    if not isinstance(
+        payload,
+        dict
+    ):
+        raise ValueError(
+            "Saved project is not a valid object."
+        )
+
+    allowed = v31_jsonable(
+        payload
+    )
+
+    context.user_data.clear()
+
+    context.user_data.update(
+        allowed
+    )
+
+    context.user_data[
+        "project_dirty"
+    ] = False
+
+    context.user_data[
+        "loaded_at"
+    ] = v31_now()
+
+    context.user_data.pop(
+        "save_reason",
+        None
+    )
+
+    return context.user_data
+
+
+# ============================================================
+# LIST PROJECTS
+# ============================================================
+
+def v31_list_projects(context):
+
+    uid = v31_safe_name(
+        v31_user_id(context),
+        "user"
+    )
+
+    folder = (
+        V31_ROOT /
+        uid
+    )
+
+    folder.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    rows = []
+
+    for path in folder.glob(
+        "*.json"
+    ):
+
+        try:
+
+            stat = path.stat()
+
+            if (
+                stat.st_size
+                >
+                V31_FILE_LIMIT_MB * 1024 * 1024
+            ):
+                continue
+
+            with path.open(
+                "r",
+                encoding="utf-8"
+            ) as fh:
+
+                data = json.load(
+                    fh
+                )
+
+            rows.append(
+                {
+                    "project_id":
+                        data.get(
+                            "project_id",
+                            path.stem
+                        ),
+
+                    "project_name":
+                        data.get(
+                            "project_name",
+                            path.stem
+                        ),
+
+                    "saved_at":
+                        data.get(
+                            "saved_at",
+                            ""
+                        ),
+
+                    "members":
+                        len(
+                            data.get(
+                                "project_results",
+                                []
+                            )
+                            or []
+                        ),
+
+                    "path":
+                        str(path),
+
+                    "mtime":
+                        stat.st_mtime,
+                }
+            )
+
+        except Exception as exc:
+
+            logger.warning(
+                "Skipping invalid project file %s: %s",
+                path,
+                exc
+            )
+
+    rows.sort(
+        key=lambda x:
+            x.get(
+                "mtime",
+                0
+            ),
+        reverse=True
+    )
+
+    return rows[
+        :V31_PROJECT_LIMIT
+    ]
+
+
+# ============================================================
+# COPY PROJECT
+# ============================================================
+
+def v31_copy_project_context(
+    context,
+    new_name=None
+):
+
+    source = v31_project_payload(
+        context
+    )
+
+    copied = v31_deepcopy(
+        source
+    )
+
+    seed = (
+        f"copy:"
+        f"{v31_project_id(context)}:"
+        f"{time.time_ns()}"
+    )
+
+    new_id = hashlib.sha1(
+        seed.encode(
+            "utf-8"
+        )
+    ).hexdigest()[:12]
+
+    copied[
+        "project_id"
+    ] = new_id
+
+    copied[
+        "project_name"
+    ] = (
+        new_name
+        or
+        f"{v31_project_name(context)}_copy"
+    )
+
+    copied[
+        "copied_from"
+    ] = v31_project_id(
+        context
+    )
+
+    copied[
+        "saved_at"
+    ] = v31_now()
+
+    new_path = v31_project_path(
+        context,
+        new_id
+    )
+
+    v31_atomic_write(
+        new_path,
+        copied
+    )
+
+    return (
+        new_path,
+        copied
+    )
+
+
+# ============================================================
+# MEMBER ACCESS
+# ============================================================
+
+def v31_member_results(context):
+
+    return context.user_data.setdefault(
+        "project_results",
+        []
+    )
+
+
+# ============================================================
+# COPY MEMBER
+# ============================================================
+
+def v31_copy_member(
+    context,
+    index
+):
+
+    rows = v31_member_results(
+        context
+    )
+
+    index = int(index)
+
+    if (
+        index < 0
+        or
+        index >= len(rows)
+    ):
+        raise IndexError(
+            "Member index is out of range."
+        )
+
+    if (
+        len(rows)
+        >=
+        V31_MEMBER_LIMIT
+    ):
+        raise ValueError(
+            "Project member limit reached."
+        )
+
+    item = v31_deepcopy(
+        rows[index]
+    )
+
+    item[
+        "copied_from_index"
+    ] = index + 1
+
+    item[
+        "copy_created_at"
+    ] = v31_now()
+
+    base = str(
+        item.get(
+            "member_name"
+        )
+        or
+        item.get(
+            "member_type"
+        )
+        or
+        item.get(
+            "kind"
+        )
+        or
+        "Member"
+    )
+
+    item[
+        "member_name"
+    ] = (
+        f"{base} - Copy"
+    )
+
+    rows.append(
+        item
+    )
+
+    v31_mark_dirty(
+        context
+    )
+
+    return (
+        len(rows) - 1,
+        item
+    )
+
+
+# ============================================================
+# DELETE MEMBER
+# ============================================================
+
+def v31_delete_member(
+    context,
+    index
+):
+
+    rows = v31_member_results(
+        context
+    )
+
+    index = int(index)
+
+    if (
+        index < 0
+        or
+        index >= len(rows)
+    ):
+        raise IndexError(
+            "Member index is out of range."
+        )
+
+    deleted = rows.pop(
+        index
+    )
+
+    v31_mark_dirty(
+        context
+    )
+
+    return deleted
+
+
+# ============================================================
+# QUICK INPUT VALUES
+# ============================================================
+
+V31_DIAMETERS = (
+    8,
+    10,
+    12,
+    14,
+    16,
+    18,
+    20,
+    22,
+    25,
+    28,
+    32,
+)
+
+V31_SPACINGS = (
+    10,
+    12,
+    15,
+    20,
+    25,
+    30,
+    40,
+    50,
+    75,
+    100,
+    125,
+    150,
+    200,
+)
+
+V31_COUNTS = (
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    8,
+    10,
+    12,
+    16,
+    20,
+    24,
+)
+
+V31_LENGTHS = (
+    0.10,
+    0.15,
+    0.20,
+    0.25,
+    0.30,
+    0.40,
+    0.50,
+    0.60,
+    0.80,
+    1.00,
+    1.50,
+    2.00,
+    3.00,
+    4.00,
+    5.00,
+    6.00,
+)
+
+
+# ============================================================
+# QUICK INPUT TYPE
+# ============================================================
+
+def v31_preset_kind(
+    field_type,
+    key
+):
+
+    k = str(
+        key
+    ).lower()
+
+    t = str(
+        field_type
+    ).lower()
+
+    if (
+        "dia" in k
+        or
+        "diameter" in t
+    ):
+        return "diameter"
+
+    if (
+        "spacing" in k
+        or
+        "spacing" in t
+    ):
+        return "spacing"
+
+    if (
+        t in (
+            "int",
+            "int0"
+        )
+        or
+        k in {
+            "count",
+            "lc",
+            "tlc",
+            "floors",
+            "steps",
+        }
+    ):
+        return "count"
+
+    if t == "float":
+        return "length"
+
+    return None
+
+
+# ============================================================
+# QUICK BUTTON ROWS
+# ============================================================
+
+def v31_preset_rows(
+    field_type,
+    key,
+    prefix="v31preset"
+):
+
+    kind = v31_preset_kind(
+        field_type,
+        key
+    )
+
+    values = {
+        "diameter":
+            V31_DIAMETERS,
+
+        "spacing":
+            V31_SPACINGS,
+
+        "count":
+            V31_COUNTS,
+
+        "length":
+            V31_LENGTHS,
+    }.get(
+        kind,
+        ()
+    )
+
+    rows = []
+
+    for start in range(
+        0,
+        len(values),
+        4
+    ):
+
+        row = []
+
+        for value in values[
+            start:start + 4
+        ]:
+
+            if kind == "diameter":
+
+                label = (
+                    f"Φ{value}"
+                )
+
+            elif kind == "length":
+
+                label = (
+                    f"{value:g} m"
+                )
+
+            elif kind == "spacing":
+
+                label = (
+                    f"{value} mm"
+                )
+
+            else:
+
+                label = str(
+                    value
+                )
+
+            row.append(
+                (
+                    label,
+                    f"{prefix}_{value}"
+                )
+            )
+
+        rows.append(
+            row
+        )
+
+    return rows
+
+
+# ============================================================
+# CALCULATION CACHE KEY
+# ============================================================
+
+def v31_calc_key(
+    kind,
+    values,
+    project_settings
+):
+
+    blob = json.dumps(
+        {
+            "kind": kind,
+            "values":
+                v31_jsonable(values),
+            "settings":
+                v31_jsonable(
+                    project_settings
+                ),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(
+            ",",
+            ":"
+        )
+    )
+
+    return hashlib.sha256(
+        blob.encode(
+            "utf-8"
+        )
+    ).hexdigest()
+
+
+# ============================================================
+# CACHE GET
+# ============================================================
+
+def v31_cache_get(key):
+
+    item = (
+        _V31_CALC_CACHE.get(
+            key
+        )
+    )
+
+    if item is None:
+        return None
+
+    _V31_CACHE_ORDER.append(
+        key
+    )
+
+    return v31_deepcopy(
+        item
+    )
+
+
+# ============================================================
+# CACHE PUT
+# ============================================================
+
+def v31_cache_put(
+    key,
+    value
+):
+
+    _V31_CALC_CACHE[
+        key
+    ] = v31_deepcopy(
+        value
+    )
+
+    _V31_CACHE_ORDER.append(
+        key
+    )
+
+    while (
+        len(_V31_CALC_CACHE)
+        >
+        V31_CALC_CACHE_LIMIT
+    ):
+
+        while _V31_CACHE_ORDER:
+
+            old = (
+                _V31_CACHE_ORDER.pop(
+                    0
+                )
+            )
+
+            if (
+                old
+                in
+                _V31_CALC_CACHE
+                and
+                old != key
+            ):
+
+                del _V31_CALC_CACHE[
+                    old
+                ]
+
+                break
+
         else:
-            kind=context.user_data['kind']; values=dict(context.user_data.get('values',{})); result=calculate(context,kind,values)
-        context.user_data['result']=result
-        context.user_data.setdefault('project_results',[]).append({'kind':kind,'values':values,'roof_type':context.user_data.get('roof_type'),'result':result})
-        await q.edit_message_text(summary_text(kind,result,lang),parse_mode='HTML',reply_markup=result_kb(lang))
-    except Exception as exc:
-        logger.exception('Calculation failed')
-        await q.edit_message_text(TEXT[lang]['calc_error'].format(escape(str(exc))),parse_mode='HTML',reply_markup=back_kb(lang))
+
+            break
 
 
-async def begin_equivalency(update, context):
-    q=update.callback_query; lang=context.user_data.get('lang','fa')
-    context.user_data['equiv']={}; context.user_data['equiv_step']=0
-    await q.edit_message_text(f"🔄 <b>{TEXT[lang]['equivalency']}</b>\n\n1️⃣ {TEXT[lang]['current_count']}\n\n{TEXT[lang]['enter_value']}",parse_mode='HTML',reply_markup=back_kb(lang))
+# ============================================================
+# METRICS
+# ============================================================
 
+def v31_metrics(context):
 
-async def receive_equivalency(update, context):
-    lang=context.user_data.get('lang','fa'); step=context.user_data.get('equiv_step')
-    if step is None: return False
-    try: value=parse_number(update.message.text,integer=True)
+    try:
+
+        return project_metrics(
+            context
+        )
+
     except Exception:
-        await update.message.reply_text(TEXT[lang]['invalid']); return True
-    eq=context.user_data.setdefault('equiv',{})
-    if step==0:
-        eq['count']=value; context.user_data['equiv_step']=1
-        await update.message.reply_text(f"2️⃣ {TEXT[lang]['current_dia']}\n\n{TEXT[lang]['enter_value']}",reply_markup=kb([[('Φ'+str(d),f'equiv_current_{d}') for d in (8,10,12,14,16,18,20,22,25,28,32)],[('0','home')]])); return True
-    if step==1:
-        eq['current_dia']=value; context.user_data['equiv_step']=2
-        await update.message.reply_text(f"3️⃣ {TEXT[lang]['replacement_dia']}\n\n{TEXT[lang]['enter_value']}",reply_markup=kb([[('Φ'+str(d),f'equiv_replace_{d}') for d in (8,10,12,14,16,18,20,22,25,28,32)],[('0','home')]])); return True
+
+        rows = v31_member_results(
+            context
+        )
+
+        concrete = sum(
+            _safe_float(
+                x.get(
+                    "concrete_m3",
+                    x.get(
+                        "concrete",
+                        0
+                    )
+                )
+            )
+            for x in rows
+        )
+
+        steel = sum(
+            _safe_float(
+                x.get(
+                    "rebar_kg",
+                    x.get(
+                        "steel_kg",
+                        0
+                    )
+                )
+            )
+            for x in rows
+        )
+
+        return {
+            "members":
+                len(rows),
+
+            "concrete_m3":
+                concrete,
+
+            "steel_kg":
+                steel,
+        }
+
+
+# ============================================================
+# ALL REBAR
+# ============================================================
+
+def v31_all_rebar(context):
+
+    out = []
+
+    for i, member in enumerate(
+        v31_member_results(context),
+        1
+    ):
+
+        details = (
+            member.get(
+                "rebar_details"
+            )
+            or
+            member.get(
+                "details"
+            )
+            or
+            []
+        )
+
+        if isinstance(
+            details,
+            dict
+        ):
+
+            details = [
+                details
+            ]
+
+        for j, d in enumerate(
+            details,
+            1
+        ):
+
+            if not isinstance(
+                d,
+                dict
+            ):
+                continue
+
+            row = dict(
+                d
+            )
+
+            row[
+                "member_index"
+            ] = i
+
+            row[
+                "member_name"
+            ] = (
+                member.get(
+                    "member_name"
+                )
+                or
+                member.get(
+                    "member_type"
+                )
+                or
+                member.get(
+                    "kind"
+                )
+                or
+                f"Member {i}"
+            )
+
+            row[
+                "bar_mark"
+            ] = (
+                row.get(
+                    "bar_mark"
+                )
+                or
+                row.get(
+                    "mark"
+                )
+                or
+                f"M{i}-B{j}"
+            )
+
+            row[
+                "diameter_mm"
+            ] = _safe_int(
+                row.get(
+                    "diameter_mm",
+                    row.get(
+                        "dia_mm",
+                        row.get(
+                            "diameter",
+                            0
+                        )
+                    )
+                )
+            )
+
+            row[
+                "length_m"
+            ] = _safe_float(
+                row.get(
+                    "length_m",
+                    row.get(
+                        "length",
+                        0
+                    )
+                )
+            )
+
+            row[
+                "count"
+            ] = _safe_int(
+                row.get(
+                    "count",
+                    row.get(
+                        "quantity",
+                        0
+                    )
+                )
+            )
+
+            row[
+                "weight_kg"
+            ] = _safe_float(
+                row.get(
+                    "weight_kg",
+                    row.get(
+                        "weight",
+                        0
+                    )
+                )
+            )
+
+            out.append(
+                row
+            )
+
+    return out
+
+
+# ============================================================
+# CUT PLAN
+# ============================================================
+
+def v31_cut_plan(context):
+
+    bars = v31_all_rebar(
+        context
+    )
+
+    pieces = []
+
+    for row in bars:
+
+        length = _safe_float(
+            row.get(
+                "length_m"
+            )
+        )
+
+        count = max(
+            0,
+            _safe_int(
+                row.get(
+                    "count"
+                )
+            )
+        )
+
+        if (
+            length <= 0
+            or
+            count <= 0
+        ):
+            continue
+
+        if (
+            length
+            >
+            V31_STOCK_LENGTH
+            + 1e-9
+        ):
+
+            pieces.append(
+                {
+                    **row,
+
+                    "cut_status":
+                        "OVER_12M",
+
+                    "stock_bars":
+                        count,
+
+                    "waste_m":
+                        0.0,
+                }
+            )
+
+            continue
+
+        stock = (
+            math.ceil(
+                length /
+                V31_STOCK_LENGTH
+            )
+            *
+            count
+        )
+
+        waste = max(
+            stock *
+            V31_STOCK_LENGTH
+            -
+            length * count,
+            0.0
+        )
+
+        pieces.append(
+            {
+                **row,
+
+                "cut_status":
+                    "OK",
+
+                "stock_bars":
+                    stock,
+
+                "waste_m":
+                    waste,
+            }
+        )
+
+    return pieces
+
+
+# ============================================================
+# REPORT ROWS
+# ============================================================
+
+def v31_report_rows(context):
+
+    rows = []
+
+    for i, r in enumerate(
+        v31_member_results(context),
+        1
+    ):
+
+        rows.append(
+            {
+                "#": i,
+
+                "member":
+                    r.get(
+                        "member_name"
+                    )
+                    or
+                    r.get(
+                        "member_type"
+                    )
+                    or
+                    r.get(
+                        "kind"
+                    )
+                    or
+                    f"Member {i}",
+
+                "type":
+                    r.get(
+                        "member_type"
+                    )
+                    or
+                    r.get(
+                        "kind"
+                    )
+                    or
+                    "",
+
+                "concrete_m3":
+                    _safe_float(
+                        r.get(
+                            "concrete_m3",
+                            r.get(
+                                "concrete",
+                                0
+                            )
+                        )
+                    ),
+
+                "rebar_kg":
+                    _safe_float(
+                        r.get(
+                            "rebar_kg",
+                            r.get(
+                                "steel_kg",
+                                0
+                            )
+                        )
+                    ),
+
+                "area_m2":
+                    _safe_float(
+                        r.get(
+                            "area_m2",
+                            r.get(
+                                "net_area_m2",
+                                0
+                            )
+                        )
+                    ),
+            }
+        )
+
+    return rows
+
+
+# ============================================================
+# EXCEL EXPORT
+# ============================================================
+
+def v31_make_excel(context):
+
+    try:
+
+        from openpyxl import Workbook
+
+        from openpyxl.styles import (
+            Font,
+            Alignment,
+            Border,
+            Side
+        )
+
+        from openpyxl.utils import (
+            get_column_letter
+        )
+
+    except ImportError as exc:
+
+        raise RuntimeError(
+            "openpyxl is required for Excel export."
+        ) from exc
+
+    wb = Workbook()
+
+    ws = wb.active
+
+    ws.title = (
+        "Project Summary"
+    )
+
+    ws.append(
+        [
+            "STRUCTURAL QUANTITY ENGINE"
+        ]
+    )
+
+    ws.append(
+        [
+            "Version",
+            V31_VERSION
+        ]
+    )
+
+    ws.append(
+        [
+            "Project",
+            v31_project_name(
+                context
+            )
+        ]
+    )
+
+    ws.append(
+        [
+            "Project ID",
+            v31_project_id(
+                context
+            )
+        ]
+    )
+
+    ws.append(
+        [
+            "Standard",
+            context.user_data.get(
+                "standard",
+                ""
+            )
+        ]
+    )
+
+    ws.append(
+        [
+            "Concrete",
+            f"C{context.user_data.get('fc', '')}"
+        ]
+    )
+
+    ws.append(
+        [
+            "Rebar",
+            context.user_data.get(
+                "rebar_grade",
+                ""
+            )
+        ]
+    )
+
+    ws.append(
+        [
+            "fy (MPa)",
+            context.user_data.get(
+                "fy",
+                ""
+            )
+        ]
+    )
+
+    ws.append(
+        [
+            "Generated",
+            v31_now()
+        ]
+    )
+
+    ws.append([])
+
+    m = v31_metrics(
+        context
+    )
+
+    ws.append(
+        [
+            "Metric",
+            "Value",
+            "Unit"
+        ]
+    )
+
+    ws.append(
+        [
+            "Members",
+            m.get(
+                "members",
+                0
+            ),
+            "ea"
+        ]
+    )
+
+    ws.append(
+        [
+            "Concrete",
+            m.get(
+                "concrete_m3",
+                0
+            ),
+            "m³"
+        ]
+    )
+
+    ws.append(
+        [
+            "Rebar",
+            m.get(
+                "steel_kg",
+                0
+            ),
+            "kg"
+        ]
+    )
+
+    ws.append(
+        [
+            "Area",
+            m.get(
+                "area_m2",
+                0
+            ),
+            "m²"
+        ]
+    )
+
+    thin = Side(
+        style="thin"
+    )
+
+    for cell in ws[1]:
+
+        cell.font = Font(
+            bold=True,
+            size=14
+        )
+
+    for row in ws.iter_rows():
+
+        for cell in row:
+
+            cell.alignment = Alignment(
+                vertical="top"
+            )
+
+    for col in range(
+        1,
+        5
+    ):
+
+        ws.column_dimensions[
+            get_column_letter(col)
+        ].width = 22
+
+    members = wb.create_sheet(
+        "Members"
+    )
+
+    headers = [
+        "#",
+        "Member",
+        "Type",
+        "Concrete m3",
+        "Rebar kg",
+        "Area m2"
+    ]
+
+    members.append(
+        headers
+    )
+
+    for row in v31_report_rows(
+        context
+    ):
+
+        members.append(
+            [
+                row[h]
+                for h in headers
+            ]
+        )
+
+    for cell in members[1]:
+
+        cell.font = Font(
+            bold=True
+        )
+
+        cell.border = Border(
+            bottom=thin
+        )
+
+    bars = wb.create_sheet(
+        "Bar Schedule"
+    )
+
+    bar_headers = [
+        "Member",
+        "Bar Mark",
+        "Diameter mm",
+        "Count",
+        "Length m",
+        "Weight kg",
+        "Location"
+    ]
+
+    bars.append(
+        bar_headers
+    )
+
+    for row in v31_all_rebar(
+        context
+    ):
+
+        bars.append(
+            [
+                row.get(
+                    "member_name",
+                    ""
+                ),
+
+                row.get(
+                    "bar_mark",
+                    ""
+                ),
+
+                row.get(
+                    "diameter_mm",
+                    0
+                ),
+
+                row.get(
+                    "count",
+                    0
+                ),
+
+                row.get(
+                    "length_m",
+                    0
+                ),
+
+                row.get(
+                    "weight_kg",
+                    0
+                ),
+
+                row.get(
+                    "location",
+                    row.get(
+                        "zone",
+                        ""
+                    )
+                ),
+            ]
+        )
+
+    for cell in bars[1]:
+
+        cell.font = Font(
+            bold=True
+        )
+
+        cell.border = Border(
+            bottom=thin
+        )
+
+    cut = wb.create_sheet(
+        "Cut List"
+    )
+
+    cut_headers = [
+        "Member",
+        "Bar Mark",
+        "Diameter mm",
+        "Piece m",
+        "Count",
+        "12m Stock Bars",
+        "Waste m",
+        "Status"
+    ]
+
+    cut.append(
+        cut_headers
+    )
+
+    for row in v31_cut_plan(
+        context
+    ):
+
+        cut.append(
+            [
+                row.get(
+                    "member_name",
+                    ""
+                ),
+
+                row.get(
+                    "bar_mark",
+                    ""
+                ),
+
+                row.get(
+                    "diameter_mm",
+                    0
+                ),
+
+                row.get(
+                    "length_m",
+                    0
+                ),
+
+                row.get(
+                    "count",
+                    0
+                ),
+
+                row.get(
+                    "stock_bars",
+                    0
+                ),
+
+                row.get(
+                    "waste_m",
+                    0
+                ),
+
+                row.get(
+                    "cut_status",
+                    ""
+                ),
+            ]
+        )
+
+    for cell in cut[1]:
+
+        cell.font = Font(
+            bold=True
+        )
+
+        cell.border = Border(
+            bottom=thin
+        )
+
+    qa = wb.create_sheet(
+        "QA"
+    )
+
+    qa.append(
+        [
+            "Check",
+            "Status",
+            "Details"
+        ]
+    )
+
+    try:
+
+        results = run_project_qa(
+            context
+        )
+
+        for item in results:
+
+            qa.append(
+                [
+                    item.get(
+                        "id",
+                        ""
+                    ),
+
+                    (
+                        "PASS"
+                        if item.get(
+                            "ok"
+                        )
+                        else
+                        "FAIL"
+                    ),
+
+                    "; ".join(
+                        item.get(
+                            "issues",
+                            []
+                        )
+                    ),
+                ]
+            )
+
+    except Exception as exc:
+
+        qa.append(
+            [
+                "QA",
+                "ERROR",
+                str(exc)
+            ]
+        )
+
+    for sheet in wb.worksheets:
+
+        for column_cells in sheet.columns:
+
+            max_len = 0
+
+            for cell in column_cells:
+
+                try:
+
+                    max_len = max(
+                        max_len,
+                        len(
+                            str(
+                                cell.value
+                                or
+                                ""
+                            )
+                        )
+                    )
+
+                except Exception:
+                    pass
+
+            sheet.column_dimensions[
+                get_column_letter(
+                    column_cells[
+                        0
+                    ].column
+                )
+            ].width = min(
+                max(
+                    max_len + 2,
+                    12
+                ),
+                42
+            )
+
+        sheet.freeze_panes = "A2"
+
+    path = (
+        V31_ROOT /
+        v31_safe_name(
+            v31_user_id(context),
+            "user"
+        )
+    )
+
+    path.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    filename = (
+        f"{v31_safe_name(v31_project_name(context))}_"
+        f"{v31_project_id(context)}.xlsx"
+    )
+
+    target = (
+        path /
+        filename
+    )
+
+    wb.save(
+        target
+    )
+
+    return target
+
+
+# ============================================================
+# PDF EXPORT
+# ============================================================
+
+def v31_make_pdf(context):
+
+    try:
+
+        from reportlab.lib import colors
+
+        from reportlab.lib.pagesizes import A4
+
+        from reportlab.lib.styles import (
+            getSampleStyleSheet,
+            ParagraphStyle
+        )
+
+        from reportlab.lib.enums import (
+            TA_CENTER
+        )
+
+        from reportlab.platypus import (
+            SimpleDocTemplate,
+            Paragraph,
+            Spacer,
+            Table,
+            TableStyle,
+            PageBreak
+        )
+
+    except ImportError as exc:
+
+        raise RuntimeError(
+            "reportlab is required for PDF export."
+        ) from exc
+
+    path = (
+        V31_ROOT /
+        v31_safe_name(
+            v31_user_id(context),
+            "user"
+        )
+    )
+
+    path.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    target = (
+        path /
+        (
+            f"{v31_safe_name(v31_project_name(context))}_"
+            f"{v31_project_id(context)}.pdf"
+        )
+    )
+
+    doc = SimpleDocTemplate(
+        str(target),
+        pagesize=A4,
+        rightMargin=30,
+        leftMargin=30,
+        topMargin=30,
+        bottomMargin=30
+    )
+
+    styles = getSampleStyleSheet()
+
+    styles.add(
+        ParagraphStyle(
+            name="V31Center",
+            parent=styles["Title"],
+            alignment=TA_CENTER,
+            fontSize=15
+        )
+    )
+
+    story = []
+
+    story.append(
+        Paragraph(
+            "STRUCTURAL QUANTITY ENGINE",
+            styles["V31Center"]
+        )
+    )
+
+    story.append(
+        Spacer(
+            1,
+            10
+        )
+    )
+
+    info = [
+        [
+            "Project",
+            v31_project_name(
+                context
+            )
+        ],
+
+        [
+            "Project ID",
+            v31_project_id(
+                context
+            )
+        ],
+
+        [
+            "Standard",
+            context.user_data.get(
+                "standard",
+                ""
+            )
+        ],
+
+        [
+            "Concrete",
+            f"C{context.user_data.get('fc', '')}"
+        ],
+
+        [
+            "Rebar",
+            context.user_data.get(
+                "rebar_grade",
+                ""
+            )
+        ],
+
+        [
+            "fy",
+            str(
+                context.user_data.get(
+                    "fy",
+                    ""
+                )
+            )
+            +
+            " MPa"
+        ],
+
+        [
+            "Generated",
+            v31_now()
+        ],
+    ]
+
+    table = Table(
+        info,
+        colWidths=[
+            100,
+            390
+        ]
+    )
+
+    table.setStyle(
+        TableStyle(
+            [
+                (
+                    "GRID",
+                    (0, 0),
+                    (-1, -1),
+                    0.4,
+                    colors.grey
+                ),
+
+                (
+                    "FONTNAME",
+                    (0, 0),
+                    (0, -1),
+                    "Helvetica-Bold"
+                ),
+
+                (
+                    "VALIGN",
+                    (0, 0),
+                    (-1, -1),
+                    "TOP"
+                ),
+            ]
+        )
+    )
+
+    story.append(
+        table
+    )
+
+    story.append(
+        Spacer(
+            1,
+            14
+        )
+    )
+
+    m = v31_metrics(
+        context
+    )
+
+    summary = [
+        [
+            "Metric",
+            "Value",
+            "Unit"
+        ],
+
+        [
+            "Members",
+            str(
+                m.get(
+                    "members",
+                    0
+                )
+            ),
+            "ea"
+        ],
+
+        [
+            "Concrete",
+            f"{m.get('concrete_m3', 0):.3f}",
+            "m3"
+        ],
+
+        [
+            "Rebar",
+            f"{m.get('steel_kg', 0):.1f}",
+            "kg"
+        ],
+
+        [
+            "Area",
+            f"{m.get('area_m2', 0):.3f}",
+            "m2"
+        ],
+    ]
+
+    t2 = Table(
+        summary,
+        colWidths=[
+            180,
+            180,
+            130
+        ]
+    )
+
+    t2.setStyle(
+        TableStyle(
+            [
+                (
+                    "GRID",
+                    (0, 0),
+                    (-1, -1),
+                    0.4,
+                    colors.grey
+                ),
+
+                (
+                    "BACKGROUND",
+                    (0, 0),
+                    (-1, 0),
+                    colors.lightgrey
+                ),
+
+                (
+                    "FONTNAME",
+                    (0, 0),
+                    (-1, 0),
+                    "Helvetica-Bold"
+                ),
+            ]
+        )
+    )
+
+    story.append(
+        t2
+    )
+
+    story.append(
+        Spacer(
+            1,
+            16
+        )
+    )
+
+    member_data = [
+        [
+            "#",
+            "Member",
+            "Type",
+            "Concrete",
+            "Rebar kg"
+        ]
+    ]
+
+    for row in v31_report_rows(
+        context
+    ):
+
+        member_data.append(
+            [
+                str(
+                    row["#"]
+                ),
+
+                str(
+                    row["member"]
+                )[:35],
+
+                str(
+                    row["type"]
+                )[:20],
+
+                f"{row['concrete_m3']:.3f}",
+
+                f"{row['rebar_kg']:.1f}",
+            ]
+        )
+
+    if len(
+        member_data
+    ) == 1:
+
+        member_data.append(
+            [
+                "-",
+                "No calculated members",
+                "-",
+                "0",
+                "0"
+            ]
+        )
+
+    mt = Table(
+        member_data,
+        repeatRows=1,
+        colWidths=[
+            25,
+            190,
+            90,
+            90,
+            90
+        ]
+    )
+
+    mt.setStyle(
+        TableStyle(
+            [
+                (
+                    "GRID",
+                    (0, 0),
+                    (-1, -1),
+                    0.35,
+                    colors.grey
+                ),
+
+                (
+                    "BACKGROUND",
+                    (0, 0),
+                    (-1, 0),
+                    colors.lightgrey
+                ),
+
+                (
+                    "FONTNAME",
+                    (0, 0),
+                    (-1, 0),
+                    "Helvetica-Bold"
+                ),
+
+                (
+                    "FONTSIZE",
+                    (0, 0),
+                    (-1, -1),
+                    7.5
+                ),
+
+                (
+                    "VALIGN",
+                    (0, 0),
+                    (-1, -1),
+                    "TOP"
+                ),
+            ]
+        )
+    )
+
+    story.append(
+        Paragraph(
+            "Members",
+            styles["Heading2"]
+        )
+    )
+
+    story.append(
+        mt
+    )
+
+    story.append(
+        PageBreak()
+    )
+
+    bars_data = [
+        [
+            "Member",
+            "Bar Mark",
+            "Dia",
+            "Count",
+            "Length",
+            "Weight"
+        ]
+    ]
+
+    for row in v31_all_rebar(
+        context
+    ):
+
+        bars_data.append(
+            [
+                str(
+                    row.get(
+                        "member_name",
+                        ""
+                    )
+                )[:24],
+
+                str(
+                    row.get(
+                        "bar_mark",
+                        ""
+                    )
+                ),
+
+                str(
+                    row.get(
+                        "diameter_mm",
+                        0
+                    )
+                ),
+
+                str(
+                    row.get(
+                        "count",
+                        0
+                    )
+                ),
+
+                f"{_safe_float(row.get('length_m')):.3f}",
+
+                f"{_safe_float(row.get('weight_kg')):.2f}",
+            ]
+        )
+
+    if len(
+        bars_data
+    ) == 1:
+
+        bars_data.append(
+            [
+                "-",
+                "-",
+                "-",
+                "0",
+                "0",
+                "0"
+            ]
+        )
+
+    bt = Table(
+        bars_data,
+        repeatRows=1,
+        colWidths=[
+            150,
+            75,
+            45,
+            50,
+            75,
+            75
+        ]
+    )
+
+    bt.setStyle(
+        TableStyle(
+            [
+                (
+                    "GRID",
+                    (0, 0),
+                    (-1, -1),
+                    0.3,
+                    colors.grey
+                ),
+
+                (
+                    "BACKGROUND",
+                    (0, 0),
+                    (-1, 0),
+                    colors.lightgrey
+                ),
+
+                (
+                    "FONTNAME",
+                    (0, 0),
+                    (-1, 0),
+                    "Helvetica-Bold"
+                ),
+
+                (
+                    "FONTSIZE",
+                    (0, 0),
+                    (-1, -1),
+                    7.2
+                ),
+            ]
+        )
+    )
+
+    story.append(
+        Paragraph(
+            "Bar Schedule",
+            styles["Heading2"]
+        )
+    )
+
+    story.append(
+        bt
+    )
+
+    story.append(
+        Spacer(
+            1,
+            12
+        )
+    )
+
+    cut_data = [
+        [
+            "Member",
+            "Mark",
+            "Dia",
+            "Piece",
+            "Count",
+            "12m",
+            "Waste"
+        ]
+    ]
+
+    for row in v31_cut_plan(
+        context
+    ):
+
+        cut_data.append(
+            [
+                str(
+                    row.get(
+                        "member_name",
+                        ""
+                    )
+                )[:20],
+
+                str(
+                    row.get(
+                        "bar_mark",
+                        ""
+                    )
+                ),
+
+                str(
+                    row.get(
+                        "diameter_mm",
+                        0
+                    )
+                ),
+
+                f"{_safe_float(row.get('length_m')):.3f}",
+
+                str(
+                    row.get(
+                        "count",
+                        0
+                    )
+                ),
+
+                str(
+                    row.get(
+                        "stock_bars",
+                        0
+                    )
+                ),
+
+                f"{_safe_float(row.get('waste_m')):.3f}",
+            ]
+        )
+
+    if len(
+        cut_data
+    ) == 1:
+
+        cut_data.append(
+            [
+                "-",
+                "-",
+                "-",
+                "0",
+                "0",
+                "0",
+                "0"
+            ]
+        )
+
+    ct = Table(
+        cut_data,
+        repeatRows=1,
+        colWidths=[
+            130,
+            55,
+            40,
+            60,
+            45,
+            45,
+            60
+        ]
+    )
+
+    ct.setStyle(
+        TableStyle(
+            [
+                (
+                    "GRID",
+                    (0, 0),
+                    (-1, -1),
+                    0.3,
+                    colors.grey
+                ),
+
+                (
+                    "BACKGROUND",
+                    (0, 0),
+                    (-1, 0),
+                    colors.lightgrey
+                ),
+
+                (
+                    "FONTNAME",
+                    (0, 0),
+                    (-1, 0),
+                    "Helvetica-Bold"
+                ),
+
+                (
+                    "FONTSIZE",
+                    (0, 0),
+                    (-1, -1),
+                    7.0
+                ),
+            ]
+        )
+    )
+
+    story.append(
+        Paragraph(
+            "Cut List / 12m Stock",
+            styles["Heading2"]
+        )
+    )
+
+    story.append(
+        ct
+    )
+
+    story.append(
+        Spacer(
+            1,
+            16
+        )
+    )
+
+    story.append(
+        Paragraph(
+            "Engineering note: quantity/detailing output must be checked against approved structural drawings and the governing code.",
+            styles["BodyText"]
+        )
+    )
+
+    doc.build(
+        story
+    )
+
+    return target
+
+
+# ============================================================
+# JSON EXPORT
+# ============================================================
+
+def v31_make_json(context):
+
+    path = (
+        V31_ROOT /
+        v31_safe_name(
+            v31_user_id(context),
+            "user"
+        )
+    )
+
+    path.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    target = (
+        path /
+        (
+            f"{v31_safe_name(v31_project_name(context))}_"
+            f"{v31_project_id(context)}.json"
+        )
+    )
+
+    with target.open(
+        "w",
+        encoding="utf-8"
+    ) as fh:
+
+        json.dump(
+            v31_project_payload(
+                context
+            ),
+            fh,
+            ensure_ascii=False,
+            indent=2
+        )
+
+    return target
+
+
+# ============================================================
+# CSV EXPORT
+# ============================================================
+
+def v31_make_csv(context):
+
+    path = (
+        V31_ROOT /
+        v31_safe_name(
+            v31_user_id(context),
+            "user"
+        )
+    )
+
+    path.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    target = (
+        path /
+        (
+            f"{v31_safe_name(v31_project_name(context))}_"
+            f"{v31_project_id(context)}.csv"
+        )
+    )
+
+    rows = v31_report_rows(
+        context
+    )
+
+    with target.open(
+        "w",
+        encoding="utf-8-sig",
+        newline=""
+    ) as fh:
+
+        writer = csv.DictWriter(
+            fh,
+            fieldnames=[
+                "#",
+                "member",
+                "type",
+                "concrete_m3",
+                "rebar_kg",
+                "area_m2"
+            ]
+        )
+
+        writer.writeheader()
+
+        writer.writerows(
+            rows
+        )
+
+    return target
+
+
+# ============================================================
+# DASHBOARD
+# ============================================================
+
+def v31_dashboard_text(
+    context,
+    lang="fa"
+):
+
+    m = v31_metrics(
+        context
+    )
+
+    name = escape(
+        v31_project_name(
+            context
+        )
+    )
+
+    pid = escape(
+        v31_project_id(
+            context
+        )
+    )
+
+    dirty = (
+        "⚠️ ذخیره نشده"
+        if context.user_data.get(
+            "project_dirty"
+        )
+        else
+        "💾 ذخیره شده"
+    )
+
+    return (
+        "📊 <b>داشبورد پروژه</b>\n\n"
+
+        f"📁 نام: <b>{name}</b>\n"
+
+        f"🆔 ID: <code>{pid}</code>\n"
+
+        f"{dirty}\n\n"
+
+        f"👷 اعضا: "
+        f"{m.get('members', 0)}\n"
+
+        f"🧱 بتن: "
+        f"{m.get('concrete_m3', 0):.3f} m³\n"
+
+        f"🔩 میلگرد: "
+        f"{m.get('steel_kg', 0):.1f} kg\n"
+
+        f"📐 مساحت: "
+        f"{m.get('area_m2', 0):.3f} m²\n\n"
+
+        f"📚 استاندارد: "
+        f"{escape(str(context.user_data.get('standard', '-')))}\n"
+
+        f"🧱 بتن: "
+        f"C{context.user_data.get('fc', '-')}\n"
+
+        f"🔩 میلگرد: "
+        f"{escape(str(context.user_data.get('rebar_grade', '-')))}"
+    )
+
+
+# ============================================================
+# PROJECT LIST TEXT
+# ============================================================
+
+def v31_project_list_text(
+    rows
+):
+
+    if not rows:
+
+        return (
+            "💾 <b>پروژه‌های ذخیره‌شده</b>\n\n"
+            "هنوز پروژه‌ای ذخیره نشده است."
+        )
+
+    lines = [
+        "💾 <b>پروژه‌های ذخیره‌شده</b>",
+        ""
+    ]
+
+    for i, row in enumerate(
+        rows[:20],
+        1
+    ):
+
+        lines.append(
+            (
+                f"{i}. "
+                f"<b>{escape(str(row['project_name']))}</b>"
+                f" | {row['members']} عضو"
+                f" | {escape(str(row['saved_at']))}"
+            )
+        )
+
+    return "\n".join(
+        lines
+    )
+
+
+# ============================================================
+# PROJECT KEYBOARD
+# ============================================================
+
+def v31_project_keyboard(
+    lang="fa"
+):
+
+    return kb(
+        [
+            [
+                (
+                    "💾 ذخیره پروژه",
+                    "v31_save"
+                ),
+
+                (
+                    "📂 پروژه‌ها",
+                    "v31_projects"
+                ),
+            ],
+
+            [
+                (
+                    "📋 کپی پروژه",
+                    "v31_copy_project"
+                ),
+
+                (
+                    "📊 داشبورد",
+                    "v31_dashboard"
+                ),
+            ],
+
+            [
+                (
+                    "📥 Excel",
+                    "v31_export_xlsx"
+                ),
+
+                (
+                    "📄 PDF",
+                    "v31_export_pdf"
+                ),
+            ],
+
+            [
+                (
+                    "🗂 JSON",
+                    "v31_export_json"
+                ),
+
+                (
+                    "📑 CSV",
+                    "v31_export_csv"
+                ),
+            ],
+
+            [
+                (
+                    "🏠 صفحه اصلی",
+                    "home"
+                )
+            ],
+        ]
+    )
+
+
+# ============================================================
+# RESULT KEYBOARD
+# ============================================================
+
+def v31_result_keyboard(
+    lang="fa"
+):
+
+    return kb(
+        [
+            [
+                (
+                    "🔩 جزئیات میلگرد",
+                    "show_rebar"
+                ),
+
+                (
+                    "✂️ Cut List",
+                    "show_cut"
+                ),
+            ],
+
+            [
+                (
+                    "📋 کپی عضو",
+                    "v31_copy_last_member"
+                ),
+
+                (
+                    "✏️ ویرایش",
+                    "edit_member"
+                ),
+            ],
+
+            [
+                (
+                    "💾 ذخیره",
+                    "v31_save"
+                ),
+
+                (
+                    "📥 خروجی",
+                    "v31_export_menu"
+                ),
+            ],
+
+            [
+                (
+                    "➕ عضو جدید",
+                    "new_member"
+                ),
+
+                (
+                    "📊 خلاصه",
+                    "summary"
+                ),
+            ],
+
+            [
+                (
+                    "🏠 خانه",
+                    "home"
+                )
+            ],
+        ]
+    )
+
+
+# ============================================================
+# EXPORT KEYBOARD
+# ============================================================
+
+def v31_export_keyboard():
+
+    return kb(
+        [
+            [
+                (
+                    "📊 Excel",
+                    "v31_export_xlsx"
+                ),
+
+                (
+                    "📄 PDF",
+                    "v31_export_pdf"
+                ),
+            ],
+
+            [
+                (
+                    "🗂 JSON",
+                    "v31_export_json"
+                ),
+
+                (
+                    "📑 CSV",
+                    "v31_export_csv"
+                ),
+            ],
+
+            [
+                (
+                    "📋 پروژه",
+                    "v31_dashboard"
+                )
+            ],
+        ]
+    )
+
+
+# ============================================================
+# TELEGRAM FILE SENDER
+# ============================================================
+
+async def v31_send_file(
+    q,
+    path,
+    caption
+):
+
+    path = Path(
+        path
+    )
+
+    if not path.exists():
+
+        raise FileNotFoundError(
+            str(path)
+        )
+
+    if (
+        path.stat().st_size
+        >
+        V31_FILE_LIMIT_MB *
+        1024 *
+        1024
+    ):
+
+        raise ValueError(
+            "Generated file is larger than configured limit."
+        )
+
+    with path.open(
+        "rb"
+    ) as fh:
+
+        await q.message.reply_document(
+            document=fh,
+            filename=path.name,
+            caption=caption
+        )
+
+
+# ============================================================
+# CALLBACK GUARD
+# ============================================================
+
+async def v31_ack_guard(
+    q,
+    context
+):
+
+    uid = v31_user_id(
+        context
+    )
+
+    key = (
+        f"{uid}:"
+        f"{q.data or ''}"
+    )
+
+    now = time.monotonic()
+
+    old = _V31_LAST_CALLBACK.get(
+        key,
+        0.0
+    )
+
+    if (
+        now - old
+        <
+        V31_CALLBACK_GUARD_SECONDS
+    ):
+
+        try:
+
+            await q.answer(
+                "⏳ در حال پردازش...",
+                show_alert=False
+            )
+
+        except Exception:
+            pass
+
+        return False
+
+    _V31_LAST_CALLBACK[
+        key
+    ] = now
+
+    if (
+        len(_V31_LAST_CALLBACK)
+        >
+        2000
+    ):
+
+        cutoff = (
+            now - 30.0
+        )
+
+        for k, t in list(
+            _V31_LAST_CALLBACK.items()
+        ):
+
+            if t < cutoff:
+
+                _V31_LAST_CALLBACK.pop(
+                    k,
+                    None
+                )
+
+    return True
+
+
+# ============================================================
+# SPECIAL CALLBACKS
+# ============================================================
+
+async def v31_handle_special_callback(
+    update,
+    context,
+    data
+):
+
+    q = update.callback_query
+
+    lang = context.user_data.get(
+        "lang",
+        "fa"
+    )
+
+    # --------------------------------------------------------
+    # SAVE
+    # --------------------------------------------------------
+
+    if data == "v31_save":
+
+        path = await asyncio.to_thread(
+            v31_save_project,
+            context,
+            "manual"
+        )
+
+        await q.edit_message_text(
+            (
+                "💾 <b>پروژه ذخیره شد</b>\n\n"
+                f"📁 {escape(v31_project_name(context))}\n"
+                f"🆔 <code>{escape(v31_project_id(context))}</code>"
+            ),
+            parse_mode="HTML",
+            reply_markup=v31_project_keyboard(
+                lang
+            )
+        )
+
+        return True
+
+    # --------------------------------------------------------
+    # PROJECT LIST
+    # --------------------------------------------------------
+
+    if data == "v31_projects":
+
+        rows = await asyncio.to_thread(
+            v31_list_projects,
+            context
+        )
+
+        buttons = []
+
+        for row in rows[:20]:
+
+            label = (
+                f"📁 "
+                f"{str(row['project_name'])[:28]}"
+            )
+
+            buttons.append(
+                [
+                    (
+                        label,
+                        f"v31_load_{row['project_id']}"
+                    )
+                ]
+            )
+
+        buttons.append(
+            [
+                (
+                    "💾 ذخیره فعلی",
+                    "v31_save"
+                ),
+
+                (
+                    "🏠 خانه",
+                    "home"
+                ),
+            ]
+        )
+
+        await q.edit_message_text(
+            v31_project_list_text(
+                rows
+            ),
+            parse_mode="HTML",
+            reply_markup=kb(
+                buttons
+            )
+        )
+
+        return True
+
+    # --------------------------------------------------------
+    # LOAD PROJECT
+    # --------------------------------------------------------
+
+    if data.startswith(
+        "v31_load_"
+    ):
+
+        pid = data[
+            len("v31_load_"):
+        ]
+
+        rows = await asyncio.to_thread(
+            v31_list_projects,
+            context
+        )
+
+        selected = next(
+            (
+                x
+                for x in rows
+                if str(
+                    x["project_id"]
+                ) == pid
+            ),
+            None
+        )
+
+        if not selected:
+
+            await q.answer(
+                "پروژه پیدا نشد",
+                show_alert=True
+            )
+
+            return True
+
+        path = Path(
+            selected["path"]
+        )
+
+        if (
+            path.stat().st_size
+            >
+            V31_FILE_LIMIT_MB *
+            1024 *
+            1024
+        ):
+
+            raise ValueError(
+                "Saved project exceeds configured file limit."
+            )
+
+        payload = await asyncio.to_thread(
+            lambda:
+                json.loads(
+                    path.read_text(
+                        encoding="utf-8"
+                    )
+                )
+        )
+
+        v31_load_project(
+            context,
+            payload
+        )
+
+        lang = context.user_data.get(
+            "lang",
+            lang
+        )
+
+        await q.edit_message_text(
+            v31_dashboard_text(
+                context,
+                lang
+            ),
+            parse_mode="HTML",
+            reply_markup=v31_project_keyboard(
+                lang
+            )
+        )
+
+        return True
+
+    # --------------------------------------------------------
+    # COPY PROJECT
+    # --------------------------------------------------------
+
+    if data == "v31_copy_project":
+
+        path, copied = (
+            await asyncio.to_thread(
+                v31_copy_project_context,
+                context
+            )
+        )
+
+        await q.edit_message_text(
+            (
+                "📋 <b>کپی پروژه ساخته شد</b>\n\n"
+                f"📁 {escape(str(copied['project_name']))}\n"
+                f"🆔 <code>{escape(str(copied['project_id']))}</code>"
+            ),
+            parse_mode="HTML",
+            reply_markup=v31_project_keyboard(
+                lang
+            )
+        )
+
+        return True
+
+    # --------------------------------------------------------
+    # DASHBOARD
+    # --------------------------------------------------------
+
+    if data == "v31_dashboard":
+
+        await q.edit_message_text(
+            v31_dashboard_text(
+                context,
+                lang
+            ),
+            parse_mode="HTML",
+            reply_markup=v31_project_keyboard(
+                lang
+            )
+        )
+
+        return True
+
+    # --------------------------------------------------------
+    # COPY LAST MEMBER
+    # --------------------------------------------------------
+
+    if data == "v31_copy_last_member":
+
+        rows = v31_member_results(
+            context
+        )
+
+        if not rows:
+
+            await q.answer(
+                "عضوی برای کپی وجود ندارد.",
+                show_alert=True
+            )
+
+            return True
+
+        idx, item = await asyncio.to_thread(
+            v31_copy_member,
+            context,
+            len(rows) - 1
+        )
+
+        await asyncio.to_thread(
+            v31_save_project,
+            context,
+            "member_copy"
+        )
+
+        await q.edit_message_text(
+            (
+                "📋 <b>عضو کپی شد</b>\n\n"
+                f"عضو جدید: #{idx + 1}\n"
+                f"{escape(str(item.get('member_name', item.get('kind', 'Member'))))}"
+            ),
+            parse_mode="HTML",
+            reply_markup=v31_result_keyboard(
+                lang
+            )
+        )
+
+        return True
+
+    # --------------------------------------------------------
+    # EXPORT MENU
+    # --------------------------------------------------------
+
+    if data == "v31_export_menu":
+
+        await q.edit_message_text(
+            "📥 <b>نوع خروجی را انتخاب کنید</b>",
+            parse_mode="HTML",
+            reply_markup=v31_export_keyboard()
+        )
+
+        return True
+
+    # --------------------------------------------------------
+    # EXPORTS
+    # --------------------------------------------------------
+
+    if data in {
+        "v31_export_xlsx",
+        "v31_export_pdf",
+        "v31_export_json",
+        "v31_export_csv"
+    }:
+
+        makers = {
+
+            "v31_export_xlsx":
+                (
+                    v31_make_excel,
+                    "📊 Excel پروژه"
+                ),
+
+            "v31_export_pdf":
+                (
+                    v31_make_pdf,
+                    "📄 PDF پروژه"
+                ),
+
+            "v31_export_json":
+                (
+                    v31_make_json,
+                    "🗂 JSON پروژه"
+                ),
+
+            "v31_export_csv":
+                (
+                    v31_make_csv,
+                    "📑 CSV پروژه"
+                ),
+        }
+
+        maker, caption = makers[
+            data
+        ]
+
+        path = await asyncio.to_thread(
+            maker,
+            context
+        )
+
+        await v31_send_file(
+            q,
+            path,
+            caption
+        )
+
+        return True
+
     return False
 
 
-async def show_equiv_result(update, context, replacement_dia):
-    q=update.callback_query; lang=context.user_data.get('lang','fa'); eq=context.user_data.get('equiv',{}); eq['replacement_dia']=replacement_dia
+# ============================================================
+# ORIGINAL FUNCTIONS
+# ============================================================
+
+_v31_original_do_calculate = (
+    do_calculate
+)
+
+_v31_original_buttons = (
+    buttons
+)
+
+_v31_original_main_menu = (
+    main_menu
+)
+
+_v31_original_result_kb = (
+    result_kb
+)
+
+# ============================================================
+# CALCULATION WRAPPER
+# ============================================================
+
+async def v31_do_calculate(
+    update,
+    context
+):
+
+    started = (
+        time.perf_counter()
+    )
+
+    context.user_data[
+        "_v31_calc_started"
+    ] = started
+
     try:
-        r=equivalent_rebar_count(eq['count'],eq['current_dia'],replacement_dia)
-        status='🟢' if r['area_equivalent'] else '🔴'; status_text=TEXT[lang]['equivalent'] if r['area_equivalent'] else TEXT[lang]['not_equivalent']
-        msg=(f"🔄 <b>{TEXT[lang]['equivalency']}</b>\n\n<pre>Current: {eq['count']} Φ{eq['current_dia']}\nArea: {r['current_area_mm2']:.0f} mm²\n\nReplacement: Φ{replacement_dia}\nRequired count: {r['required_count']}\nArea/bar: {r['replacement_bar_area_mm2']:.0f} mm²</pre>\n{status} {status_text}\n\n{TEXT[lang]['engineering_warning']}")
-        context.user_data['equiv_step']=None
-        await q.edit_message_text(msg,parse_mode='HTML',reply_markup=back_kb(lang))
-    except Exception as exc:
-        await q.edit_message_text(TEXT[lang]['calc_error'].format(escape(str(exc))),parse_mode='HTML',reply_markup=back_kb(lang))
+
+        await _v31_original_do_calculate(
+            update,
+            context
+        )
+
+        context.user_data[
+            "last_calculation_seconds"
+        ] = round(
+            time.perf_counter()
+            -
+            started,
+            4
+        )
+
+        v31_mark_dirty(
+            context
+        )
+
+        await asyncio.to_thread(
+            v31_save_project,
+            context,
+            "calculation"
+        )
+
+    finally:
+
+        context.user_data.pop(
+            "_v31_calc_started",
+            None
+        )
 
 
-async def buttons(update, context):
+# ============================================================
+# BUTTON ROUTER
+# ============================================================
+
+async def v31_buttons(
+    update,
+    context
+):
+
     q = update.callback_query
+
     if q is None:
         return
-    data = q.data or ''
-    lang = context.user_data.get('lang', 'fa')
-    # The dispatcher acknowledges every callback before routing it.
-    # This handler intentionally does not call answer() a second time.
-    if not isinstance(data, str) or not data:
-        await q.edit_message_text(TEXT[lang]['invalid'], reply_markup=main_menu(lang))
+
+    data = q.data or ""
+
+    special = {
+        "v31_save",
+        "v31_projects",
+        "v31_copy_project",
+        "v31_dashboard",
+        "v31_copy_last_member",
+        "v31_export_menu",
+        "v31_export_xlsx",
+        "v31_export_pdf",
+        "v31_export_json",
+        "v31_export_csv",
+    }
+
+    if (
+        data.startswith(
+            "v31_load_"
+        )
+        or
+        data in special
+    ):
+
+        if not await v31_ack_guard(
+            q,
+            context
+        ):
+            return
+
+        try:
+
+            handled = (
+                await v31_handle_special_callback(
+                    update,
+                    context,
+                    data
+                )
+            )
+
+            if handled:
+                return
+
+        except Exception as exc:
+
+            logger.exception(
+                "V3.1 callback failed"
+            )
+
+            lang = context.user_data.get(
+                "lang",
+                "fa"
+            )
+
+            await q.edit_message_text(
+                TEXT.get(
+                    lang,
+                    TEXT["fa"]
+                )[
+                    "calc_error"
+                ].format(
+                    escape(
+                        str(exc)
+                    )
+                ),
+                parse_mode="HTML",
+                reply_markup=back_kb(
+                    lang
+                )
+            )
+
+            return
+
+    if data in {
+        "project_tools",
+        "v31_project_menu"
+    }:
+
+        lang = context.user_data.get(
+            "lang",
+            "fa"
+        )
+
+        await q.edit_message_text(
+            "🧰 <b>مدیریت پروژه</b>",
+            parse_mode="HTML",
+            reply_markup=v31_project_keyboard(
+                lang
+            )
+        )
+
         return
 
-    if data=='language': return await q.edit_message_text(TEXT[lang]['language'],reply_markup=language_keyboard())
-    if data.startswith('lang_'):
-        context.user_data['lang']=data.split('_',1)[1]; lang=context.user_data['lang']
-        return await q.edit_message_text(TEXT[lang]['standard'] if not project_ready(context) else TEXT[lang]['welcome'],parse_mode='HTML',reply_markup=standard_keyboard(lang) if not project_ready(context) else main_menu(lang))
-    if data.startswith('std_'): return await choose_standard(update,context)
-    if data.startswith('fc_'): return await choose_concrete(update,context)
-    if data.startswith('grade_'):
-        return await choose_grade(update,context)
-    if data=='manual_input':
-        if context.user_data.get('kind') == 'roof':
-            rt=context.user_data.get('roof_type'); idx=context.user_data.get('roof_step_index'); f=ROOF_STEPS[rt][idx]
-            return await q.edit_message_text(prompt_text(lang,f[1],idx+1,len(ROOF_STEPS[rt])),parse_mode='HTML',reply_markup=step_kb(lang,rt,idx,True))
-        kind=context.user_data.get('kind'); idx=context.user_data.get('step_index'); f=STEPS[kind][idx]
-        return await q.edit_message_text(prompt_text(lang,field_label(f,lang),idx+1,len(STEPS[kind])),parse_mode='HTML',reply_markup=step_kb(lang,kind,idx))
-    if data.startswith('preset_'):
-        raw=data[len('preset_'):]
-        try: value=parse_number(raw)
-        except Exception: return await q.answer('Invalid preset',show_alert=True)
-        if context.user_data.get('kind') == 'roof':
-            rt=context.user_data.get('roof_type'); idx=context.user_data.get('roof_step_index'); key,_,typ=ROOF_STEPS[rt][idx]
-            if value==0 and typ not in ('diameter_optional','spacing_optional','int0'): return await q.answer('Value not allowed',show_alert=True)
-            context.user_data['roof_values'][key]=value; nxt=idx+1
-            if nxt < len(ROOF_STEPS[rt]):
-                context.user_data['roof_step_index']=nxt; f=ROOF_STEPS[rt][nxt]
-                return await q.edit_message_text(prompt_text(lang,f[1],nxt+1,len(ROOF_STEPS[rt])),parse_mode='HTML',reply_markup=step_kb(lang,rt,nxt,True))
-            context.user_data['roof_step_index']=None
-            return await q.edit_message_text(review_roof(context,rt,context.user_data['roof_values'],lang),parse_mode='HTML',reply_markup=review_kb(lang))
-        kind=context.user_data.get('kind'); idx=context.user_data.get('step_index'); key,_,typ=STEPS[kind][idx]
-        if value==0 and typ not in ('diameter_optional','spacing_optional','int0'): return await q.answer('Value not allowed',show_alert=True)
-        context.user_data['values'][key]=value; context.user_data['history'].append(idx); nxt=idx+1
-        if nxt < len(STEPS[kind]):
-            context.user_data['step_index']=nxt; f=STEPS[kind][nxt]
-            return await q.edit_message_text(prompt_text(lang,field_label(f,lang),nxt+1,len(STEPS[kind])),parse_mode='HTML',reply_markup=step_kb(lang,kind,nxt))
-        context.user_data['step_index']=None
-        return await q.edit_message_text(review_text_with_context(context,kind,context.user_data['values'],lang),parse_mode='HTML',reply_markup=review_kb(lang))
-    if data=='home':
-        saved={k:context.user_data.get(k) for k in ('lang','standard','fc','rebar_grade','fy')}; results=context.user_data.get('project_results',[]); context.user_data.clear(); context.user_data.update({k:v for k,v in saved.items() if v is not None}); context.user_data['project_results']=results
-        return await q.edit_message_text(TEXT[lang]['welcome'],parse_mode='HTML',reply_markup=main_menu(lang) if project_ready(context) else standard_keyboard(lang))
-    if data=='cancel':
-        for k in ('kind','step_index','values','history','roof_type','roof_step_index','roof_values','result'): context.user_data.pop(k,None)
-        return await q.edit_message_text(TEXT[lang]['welcome'],parse_mode='HTML',reply_markup=main_menu(lang))
-    if data=='prev':
-        if context.user_data.get('kind')=='roof':
-            idx=context.user_data.get('roof_step_index'); rt=context.user_data.get('roof_type')
-            if idx in (None,0): return await q.edit_message_text(TEXT[lang]['welcome'],parse_mode='HTML',reply_markup=main_menu(lang))
-            idx-=1; context.user_data['roof_step_index']=idx; key=ROOF_STEPS[rt][idx][0]; context.user_data['roof_values'].pop(key,None); f=ROOF_STEPS[rt][idx]
-            return await q.edit_message_text(prompt_text(lang,f[1],idx+1,len(ROOF_STEPS[rt])),parse_mode='HTML',reply_markup=step_kb(lang,rt,idx,True))
-        kind=context.user_data.get('kind'); idx=context.user_data.get('step_index')
-        if not kind or idx in (None,0): return await q.edit_message_text(TEXT[lang]['welcome'],parse_mode='HTML',reply_markup=main_menu(lang))
-        idx-=1; context.user_data['step_index']=idx; context.user_data['values'].pop(STEPS[kind][idx][0],None); f=STEPS[kind][idx]
-        return await q.edit_message_text(prompt_text(lang,field_label(f,lang),idx+1,len(STEPS[kind])),parse_mode='HTML',reply_markup=step_kb(lang,kind,idx))
-    if data=='do_calculate': return await do_calculate(update,context)
-    if data=='edit_member':
-        if context.user_data.get('kind')=='roof': return await begin_roof(update,context,context.user_data['roof_type'])
-        return await begin_wizard(update,context,context.user_data['kind'])
-    if data=='foundation': return await q.edit_message_text('🧱 <b>فونداسیون</b>',parse_mode='HTML',reply_markup=section_kb(lang,[[('⬛ پی منفرد','foundation_iso'),('▬ پی نواری','foundation_strip')],[('▰ پی گسترده / رادیه','foundation_raft')]]))
-    if data=='columns': return await q.edit_message_text('🏛️ <b>ستون‌ها</b>',parse_mode='HTML',reply_markup=section_kb(lang,[[('▯ ستون مستطیلی','column_rect'),('◯ ستون گرد','column_round')]]))
-    if data=='beams': return await q.edit_message_text('📐 <b>تیرها</b>',parse_mode='HTML',reply_markup=section_kb(lang,[[('📐 تیر اصلی','beam_main'),('📏 تیر فرعی','beam_secondary')]]))
-    if data=='roofs': return await q.edit_message_text('🏠 <b>سیستم سقف</b>\n\nبرای هر سیستم، ورودی‌های اختصاصی استفاده می‌شود؛ ضریب تجربی مخفی وجود ندارد.',parse_mode='HTML',reply_markup=section_kb(lang,[[ (ROOF_TYPES['eps']['name'][lang],'roof_eps') ],[(ROOF_TYPES['clay']['name'][lang],'roof_clay')],[(ROOF_TYPES['waffle']['name'][lang],'roof_waffle')],[(ROOF_TYPES['slab']['name'][lang],'roof_slab')]]))
-    if data=='ties': return await q.edit_message_text('🔗 <b>شناژ و کلاف</b>',parse_mode='HTML',reply_markup=section_kb(lang,[[('🔗 شناژ','tie_beam'),('⛓️ کلاف','tie_cowl')]]))
-    if data=='walls': return await q.edit_message_text('🧱 <b>دیوارها</b>',parse_mode='HTML',reply_markup=section_kb(lang,[[('🏢 دیوار برشی','wall_shear'),('🧱 دیوار حائل','wall_retaining')]]))
-    if data=='stairs': return await begin_wizard(update,context,'stair')
-    mapping={'foundation_iso':'iso','foundation_strip':'strip','foundation_raft':'raft','column_rect':'column_rect','column_round':'column_round','beam_main':'beam','beam_secondary':'beam','tie_beam':'tie','tie_cowl':'tie','wall_shear':'wall','wall_retaining':'wall'}
-    if data in mapping: return await begin_wizard(update,context,mapping[data])
-    if data.startswith('roof_'):
-        rt=data[5:]
-        if rt in ROOF_TYPES: return await begin_roof(update,context,rt)
-    if data=='show_rebar': return await q.edit_message_text(rebar_text(context.user_data.get('result',{}).get('rebar_details',[]),lang),parse_mode='HTML',reply_markup=kb([[(TEXT[lang]['show_cut'],'show_cut'),(TEXT[lang]['result'],'back_result')],[(TEXT[lang]['home'],'home')]]))
-    if data=='show_cut': return await q.edit_message_text(cut_text(context.user_data.get('result',{}).get('rebar_details',[]),lang),parse_mode='HTML',reply_markup=kb([[(TEXT[lang]['show_rebar'],'show_rebar'),(TEXT[lang]['result'],'back_result')],[(TEXT[lang]['home'],'home')]]))
-    if data=='back_result': return await q.edit_message_text(summary_text(context.user_data.get('kind',''),context.user_data.get('result',{}),lang),parse_mode='HTML',reply_markup=result_kb(lang))
-    if data=='new_member':
-        for k in ('kind','step_index','values','history','roof_type','roof_step_index','roof_values','result'): context.user_data.pop(k,None)
-        return await q.edit_message_text(TEXT[lang]['welcome'],parse_mode='HTML',reply_markup=main_menu(lang))
-    if data=='summary': return await q.edit_message_text(project_summary_text(context,lang),parse_mode='HTML',reply_markup=back_kb(lang))
-    if data=='settings':
-        std=project_standard(context); return await q.edit_message_text(f"⚙️ <b>{TEXT[lang]['settings']}</b>\n\n📚 {escape(STANDARDS[std][lang])}\n🧱 C{project_fc(context):g}\n🔩 {escape(project_grade(context))}\nfy={project_fy(context):g} MPa",parse_mode='HTML',reply_markup=kb([[(TEXT[lang]['standard_setting'],'settings_standard')],[(TEXT[lang]['materials'],'settings_materials')],[(TEXT[lang]['language'],'language')],[(TEXT[lang]['home'],'home')]]))
-    if data=='settings_standard': return await q.edit_message_text(TEXT[lang]['standard'],parse_mode='HTML',reply_markup=standard_keyboard(lang))
-    if data=='equiv': return await begin_equivalency(update,context)
-    if data.startswith('equiv_current_'):
-        d=int(data.rsplit('_',1)[1]); context.user_data['equiv']['current_dia']=d; context.user_data['equiv_step']=2; return await q.edit_message_text(f"3️⃣ {TEXT[lang]['replacement_dia']}",reply_markup=kb([[('Φ'+str(x),f'equiv_replace_{x}') for x in (8,10,12,14,16,18,20,22,25,28,32)]]))
-    if data.startswith('equiv_replace_'): return await show_equiv_result(update,context,int(data.rsplit('_',1)[1]))
-    if data=='natural_input':
-        context.user_data['natural_mode']=True; return await q.edit_message_text(f"✍️ <b>{TEXT[lang]['natural']}</b>\n\nمثال: <code>stirrups 8 spacing 20 length 7</code>",parse_mode='HTML',reply_markup=back_kb(lang))
-    if data=='multi_column':
-        context.user_data['multi_mode']='input'; return await q.edit_message_text(f"🏢 <b>{TEXT[lang]['multi_column']}</b>\n\nمثال: <code>۱۰ طبقه، ارتفاع هر طبقه ۳.۲، ۱۶ میلگرد ۲۰</code>",parse_mode='HTML',reply_markup=back_kb(lang))
-    if data=='help': return await q.edit_message_text(f"ℹ️ <b>{TEXT[lang]['help']}</b>\n\nاین ابزار برای برآورد کمی بتن و میلگرد است. Cut List بر مبنای شاخه ۱۲ متری گزارش می‌شود. خروجی جایگزین نقشه و محاسبات نهایی مهندس محاسب نیست. استاندارد China بدون fy صریح پذیرفته نمی‌شود.",parse_mode='HTML',reply_markup=back_kb(lang))
-    if data=='settings_materials': return await q.edit_message_text(TEXT[lang]['concrete'],reply_markup=concrete_keyboard(lang))
-    return await q.edit_message_text(TEXT[lang]['welcome'],parse_mode='HTML',reply_markup=main_menu(lang))
+    await _v31_original_buttons(
+        update,
+        context
+    )
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear(); context.user_data['lang']='fa'
-    await update.message.reply_text(TEXT['fa']['language'],parse_mode='HTML',reply_markup=language_keyboard())
+# ============================================================
+# MAIN MENU UPGRADE
+# ============================================================
+
+def v31_main_menu(
+    lang
+):
+
+    base = _v31_original_main_menu(
+        lang
+    )
+
+    rows = list(
+        base.inline_keyboard
+    )
+
+    exists = any(
+        any(
+            getattr(
+                b,
+                "callback_data",
+                ""
+            )
+            ==
+            "v31_project_menu"
+            for b in row
+        )
+        for row in rows
+    )
+
+    if not exists:
+
+        rows.insert(
+            max(
+                len(rows) - 2,
+                0
+            ),
+            [
+                InlineKeyboardButton(
+                    "🗂 مدیریت پروژه",
+                    callback_data=
+                    "v31_project_menu"
+                ),
+
+                InlineKeyboardButton(
+                    "📊 داشبورد",
+                    callback_data=
+                    "v31_dashboard"
+                ),
+            ]
+        )
+
+    return InlineKeyboardMarkup(
+        rows
+    )
 
 
-async def choose_language(update, context):
-    q=update.callback_query; await q.answer(); lang=q.data.split('_',1)[1]; context.user_data.clear(); context.user_data['lang']=lang
-    await q.edit_message_text(TEXT[lang]['standard'],parse_mode='HTML',reply_markup=standard_keyboard(lang))
+# ============================================================
+# RESULT MENU UPGRADE
+# ============================================================
+
+def v31_result_kb(
+    lang
+):
+
+    base = _v31_original_result_kb(
+        lang
+    )
+
+    rows = list(
+        base.inline_keyboard
+    )
+
+    rows.insert(
+        1,
+        [
+            InlineKeyboardButton(
+                "📋 کپی عضو",
+                callback_data=
+                "v31_copy_last_member"
+            ),
+
+            InlineKeyboardButton(
+                "💾 ذخیره",
+                callback_data=
+                "v31_save"
+            ),
+        ]
+    )
+
+    rows.insert(
+        2,
+        [
+            InlineKeyboardButton(
+                "📥 Excel",
+                callback_data=
+                "v31_export_xlsx"
+            ),
+
+            InlineKeyboardButton(
+                "📄 PDF",
+                callback_data=
+                "v31_export_pdf"
+            ),
+        ]
+    )
+
+    return InlineKeyboardMarkup(
+        rows
+    )
 
 
-async def receive_router(update, context):
-    if context.user_data.get('awaiting_fy'):
-        lang=context.user_data.get('lang','fa')
+# ============================================================
+# GLOBAL REPLACEMENTS
+# ============================================================
+
+buttons = v31_buttons
+
+do_calculate = v31_do_calculate
+
+main_menu = v31_main_menu
+
+result_kb = v31_result_kb
+
+
+# ============================================================
+# START
+# ============================================================
+
+async def v31_start(
+    update,
+    context
+):
+
+    context.user_data.clear()
+
+    context.user_data[
+        "lang"
+    ] = "fa"
+
+    try:
+
+        context.user_data[
+            "_user_id"
+        ] = str(
+            update.effective_user.id
+        )
+
+    except Exception:
+
+        context.user_data[
+            "_user_id"
+        ] = "anonymous"
+
+    context.user_data[
+        "project_id"
+    ] = hashlib.sha1(
+        (
+            f"{v31_user_id(context)}:"
+            f"{time.time_ns()}"
+        ).encode(
+            "utf-8"
+        )
+    ).hexdigest()[:12]
+
+    context.user_data[
+        "project_name"
+    ] = "پروژه جدید"
+
+    context.user_data[
+        "project_dirty"
+    ] = True
+
+    context.user_data[
+        "project_results"
+    ] = []
+
+    await update.message.reply_text(
+        TEXT["fa"]["language"],
+        parse_mode="HTML",
+        reply_markup=
+        language_keyboard()
+    )
+
+
+start = v31_start
+
+
+# ============================================================
+# CLEAN OLD EXPORTS
+# ============================================================
+
+def v31_cleanup_old_exports():
+
+    cutoff = (
+        time.time()
+        -
+        V31_EXPORT_TTL_SECONDS
+    )
+
+    for root, _dirs, files in os.walk(
+        V31_ROOT
+    ):
+
+        for name in files:
+
+            if not name.lower().endswith(
+                (
+                    ".xlsx",
+                    ".pdf",
+                    ".csv",
+                    ".json"
+                )
+            ):
+                continue
+
+            path = (
+                Path(root) /
+                name
+            )
+
+            try:
+
+                if (
+                    path.stat().st_mtime
+                    <
+                    cutoff
+                    and
+                    path.stat().st_size
+                    <=
+                    V31_FILE_LIMIT_MB *
+                    1024 *
+                    1024
+                ):
+
+                    if name.lower().endswith(
+                        (
+                            ".xlsx",
+                            ".pdf",
+                            ".csv"
+                        )
+                    ):
+
+                        path.unlink()
+
+            except OSError:
+                pass
+
+
+# ============================================================
+# QUICK PRESET CALLBACKS
+# ============================================================
+
+_v31_original_buttons_2 = buttons
+
+
+async def v31_buttons_final(
+    update,
+    context
+):
+
+    q = update.callback_query
+
+    if q is None:
+        return
+
+    data = q.data or ""
+
+    lang = context.user_data.get(
+        "lang",
+        "fa"
+    )
+
+    # ========================================================
+    # QUICK PRESET
+    # ========================================================
+
+    if data.startswith(
+        "v31preset_"
+    ):
+
+        raw = data[
+            len("v31preset_"):
+        ]
+
         try:
-            fy=parse_number(update.message.text)
-            if fy <= 0: raise ValueError
-            context.user_data.update(fy=fy,rebar_grade=f'fy={fy:g} MPa',awaiting_fy=False,project_results=[])
-            await update.message.reply_text(TEXT[lang]['project_ready']+f"\n\n📚 {escape(STANDARDS['china'][lang])}\n🧱 C{project_fc(context):g}\n🔩 fy={fy:g} MPa",parse_mode='HTML',reply_markup=main_menu(lang)); return
+
+            value = parse_number(
+                raw
+            )
+
         except Exception:
-            await update.message.reply_text(TEXT[lang]['invalid']); return
-    if context.user_data.get('natural_mode'):
-        lang=context.user_data.get('lang','fa')
+
+            await q.answer(
+                "مقدار نامعتبر",
+                show_alert=True
+            )
+
+            return
+
+        # ----------------------------------------------------
+        # ROOF
+        # ----------------------------------------------------
+
+        if (
+            context.user_data.get(
+                "kind"
+            )
+            ==
+            "roof"
+        ):
+
+            rt = context.user_data.get(
+                "roof_type"
+            )
+
+            idx = context.user_data.get(
+                "roof_step_index"
+            )
+
+            if (
+                rt is None
+                or
+                idx is None
+                or
+                rt not in ROOF_STEPS
+            ):
+
+                await q.answer(
+                    "مرحله ورودی فعال نیست",
+                    show_alert=True
+                )
+
+                return
+
+            key, _label, typ = (
+                ROOF_STEPS[
+                    rt
+                ][
+                    idx
+                ]
+            )
+
+            context.user_data.setdefault(
+                "roof_values",
+                {}
+            )[key] = value
+
+            nxt = idx + 1
+
+            if (
+                nxt
+                <
+                len(
+                    ROOF_STEPS[
+                        rt
+                    ]
+                )
+            ):
+
+                context.user_data[
+                    "roof_step_index"
+                ] = nxt
+
+                f = ROOF_STEPS[
+                    rt
+                ][
+                    nxt
+                ]
+
+                await q.edit_message_text(
+                    prompt_text(
+                        lang,
+                        f[1],
+                        nxt + 1,
+                        len(
+                            ROOF_STEPS[
+                                rt
+                            ]
+                        )
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=
+                    step_kb(
+                        lang,
+                        rt,
+                        nxt,
+                        True
+                    )
+                )
+
+            else:
+
+                context.user_data[
+                    "roof_step_index"
+                ] = None
+
+                await q.edit_message_text(
+                    review_roof(
+                        context,
+                        rt,
+                        context.user_data[
+                            "roof_values"
+                        ],
+                        lang
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=
+                    review_kb(
+                        lang
+                    )
+                )
+
+        # ----------------------------------------------------
+        # NORMAL MEMBER
+        # ----------------------------------------------------
+
+        else:
+
+            kind = context.user_data.get(
+                "kind"
+            )
+
+            idx = context.user_data.get(
+                "step_index"
+            )
+
+            if (
+                kind is None
+                or
+                idx is None
+                or
+                kind not in STEPS
+            ):
+
+                await q.answer(
+                    "مرحله ورودی فعال نیست",
+                    show_alert=True
+                )
+
+                return
+
+            key, _label, typ = (
+                STEPS[
+                    kind
+                ][
+                    idx
+                ]
+            )
+
+            if (
+                value == 0
+                and
+                typ not in (
+                    "diameter_optional",
+                    "spacing_optional",
+                    "int0"
+                )
+            ):
+
+                await q.answer(
+                    "صفر برای این فیلد مجاز نیست",
+                    show_alert=True
+                )
+
+                return
+
+            context.user_data.setdefault(
+                "values",
+                {}
+            )[key] = value
+
+            context.user_data.setdefault(
+                "history",
+                []
+            ).append(
+                idx
+            )
+
+            nxt = idx + 1
+
+            if (
+                nxt
+                <
+                len(
+                    STEPS[
+                        kind
+                    ]
+                )
+            ):
+
+                context.user_data[
+                    "step_index"
+                ] = nxt
+
+                f = STEPS[
+                    kind
+                ][
+                    nxt
+                ]
+
+                await q.edit_message_text(
+                    prompt_text(
+                        lang,
+                        field_label(
+                            f,
+                            lang
+                        ),
+                        nxt + 1,
+                        len(
+                            STEPS[
+                                kind
+                            ]
+                        )
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=
+                    step_kb(
+                        lang,
+                        kind,
+                        nxt
+                    )
+                )
+
+            else:
+
+                context.user_data[
+                    "step_index"
+                ] = None
+
+                await q.edit_message_text(
+                    review_text_with_context(
+                        context,
+                        kind,
+                        context.user_data[
+                            "values"
+                        ],
+                        lang
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=
+                    review_kb(
+                        lang
+                    )
+                )
+
+        v31_mark_dirty(
+            context
+        )
+
+        return
+
+    await _v31_original_buttons_2(
+        update,
+        context
+    )
+
+
+buttons = v31_buttons_final
+
+
+# ============================================================
+# CALLBACK ROUTER
+# ============================================================
+
+async def v31_callback_router(
+    update,
+    context
+):
+
+    q = update.callback_query
+
+    if q is None:
+        return
+
+    try:
+
+        if not await v31_ack_guard(
+            q,
+            context
+        ):
+
+            return
+
+        await q.answer()
+
+    except Exception:
+        pass
+
+    try:
+
+        await buttons(
+            update,
+            context
+        )
+
+    except Exception as exc:
+
+        logger.exception(
+            "V3.1 callback handling failed: %s",
+            exc
+        )
+
+        lang = context.user_data.get(
+            "lang",
+            "fa"
+        )
+
         try:
-            parsed=parse_natural_input(update.message.text)
-            f=parsed.get('fields',{})
-            if not f: raise ValueError('No structured fields detected.')
-            msg='✍️ <b>Parsed input</b>\n\n<pre>'+escape(str(f))+'</pre>\n\n⚠️ Before using it in a calculation, verify the interpreted fields.'
-            await update.message.reply_text(msg,parse_mode='HTML',reply_markup=back_kb(lang)); return
-        except Exception as exc:
-            await update.message.reply_text(TEXT[lang]['calc_error'].format(escape(str(exc))),parse_mode='HTML'); return
-    if context.user_data.get('multi_mode')=='input':
-        lang=context.user_data.get('lang','fa')
-        try:
-            f=parse_natural_input(update.message.text).get('fields',{})
-            required=('floors','story_height_m','count','diameter_mm')
-            if not all(k in f for k in required): raise ValueError('floors, story_height_m, count and diameter_mm are required.')
-            if 'ld_m' in f:
-                lap=iran_column_lap_rule(f['ld_m'],splice_class=f.get('splice_class','B'),special_moment_frame=True)
-                plan=multistory_column_splice_schedule(int(f['floors']),f['story_height_m'],int(f['count']),int(f['diameter_mm']),lap,coupler=bool(f.get('coupler_requested')),special_moment_frame=True)
-                context.user_data['multi_mode']=None
-                rows='\n'.join(f"{r['connection_between_floors']}: {r['splice_start_from_lower_story_base_m']:.2f}-{r['splice_end_from_lower_story_base_m']:.2f} m" for r in plan['schedule'][:10])
-                await update.message.reply_text(f"🏢 <b>برنامه وصله ستون</b>\n\nطبقات: {plan['floors']}\nمیلگرد: {plan['bar_count']}Φ{plan['diameter_mm']}\nوصله: {lap['lap_length_m']:.3f} m\n\n{rows}\n\n⚠️ کنترل نهایی بر اساس نقشه و سیستم سازه‌ای الزامی است.",parse_mode='HTML',reply_markup=back_kb(lang)); return
-            plan=column_multistory_plan(int(f['floors']),f['story_height_m'],int(f['count']),int(f['diameter_mm']))
-            context.user_data['multi_mode']=None
-            await update.message.reply_text(f"🏢 <b>برنامه اولیه ستون چندطبقه</b>\n\nطبقات: {plan['floors']}\nارتفاع: {plan['story_height_m']:.2f} m\nمیلگرد: {plan['longitudinal_bars']}Φ{plan['diameter_mm']}\nاتصالات: {plan['connections']}",parse_mode='HTML',reply_markup=back_kb(lang)); return
-        except Exception as exc:
-            await update.message.reply_text(TEXT[lang]['calc_error'].format(escape(str(exc))),parse_mode='HTML'); return
-    if context.user_data.get('roof_type') and context.user_data.get('roof_step_index') is not None:
-        if await receive_roof(update,context): return
-    if context.user_data.get('equiv_step') is not None:
-        if await receive_equivalency(update,context): return
-    await receive(update,context)
+
+            await q.edit_message_text(
+                TEXT[lang][
+                    "calc_error"
+                ].format(
+                    escape(
+                        str(exc)
+                    )
+                ),
+                parse_mode="HTML",
+                reply_markup=
+                back_kb(
+                    lang
+                )
+            )
+
+        except Exception:
+
+            logger.exception(
+                "Could not render callback error"
+            )
 
 
-async def error_handler(update, context):
-    logger.exception('Unhandled bot error',exc_info=context.error)
-
+# ============================================================
+# FINAL MAIN
+# ============================================================
 
 def main():
-    if not BOT_TOKEN: raise RuntimeError('BOT_TOKEN environment variable is not set')
-    if not RENDER_EXTERNAL_URL: raise RuntimeError('RENDER_EXTERNAL_URL environment variable is not set')
-    webhook_url=f'{RENDER_EXTERNAL_URL}/telegram'
-    app=Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler('start', start))
 
-    # One deterministic callback entry point prevents overlapping handlers
-    # from competing for the same callback query. Every callback is
-    # acknowledged immediately and routed by the data value below.
-    async def callback_router(update, context):
-        q = update.callback_query
-        if q is None:
-            return
-        try:
-            await q.answer()
-        except Exception:
-            logger.exception('Callback acknowledgement failed')
-        try:
-            await buttons(update, context)
-        except Exception as exc:
-            logger.exception('Callback handling failed: %s', exc)
-            lang = context.user_data.get('lang', 'fa')
-            try:
-                await q.edit_message_text(
-                    TEXT[lang]['calc_error'].format(escape(str(exc))),
-                    parse_mode='HTML',
-                    reply_markup=back_kb(lang),
-                )
-            except Exception:
-                logger.exception('Could not send callback error to user')
+    if not BOT_TOKEN:
 
-    app.add_handler(CallbackQueryHandler(callback_router))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_router))
-    app.add_error_handler(error_handler)
-    print('Concrete Structure Quantity Bot - professional build')
-    print(f'Port: {PORT}')
-    print(f'Webhook: {webhook_url}')
-    app.run_webhook(listen='0.0.0.0',port=PORT,url_path='telegram',webhook_url=webhook_url,allowed_updates=Update.ALL_TYPES,drop_pending_updates=True)
+        raise RuntimeError(
+            "BOT_TOKEN environment variable is not set"
+        )
+
+    if not RENDER_EXTERNAL_URL:
+
+        raise RuntimeError(
+            "RENDER_EXTERNAL_URL environment variable is not set"
+        )
+
+    v31_cleanup_old_exports()
+
+    webhook_url = (
+        f"{RENDER_EXTERNAL_URL}/telegram"
+    )
+
+    app = (
+        Application
+        .builder()
+        .token(
+            BOT_TOKEN
+        )
+        .build()
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "start",
+            start
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            v31_callback_router
+        )
+    )
+
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT &
+            ~filters.COMMAND,
+            receive_router
+        )
+    )
+
+    app.add_error_handler(
+        error_handler
+    )
+
+    print(
+        f"Concrete Structure Quantity Bot - V{V31_VERSION}"
+    )
+
+    print(
+        f"Port: {PORT}"
+    )
+
+    print(
+        f"Webhook: {webhook_url}"
+    )
+
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path="telegram",
+        webhook_url=webhook_url,
+        allowed_updates=
+            Update.ALL_TYPES,
+        drop_pending_updates=True
+    )
 
 
-if __name__=='__main__':
+# ============================================================
+# RUN
+# ============================================================
+
+if __name__ == "__main__":
     main()
