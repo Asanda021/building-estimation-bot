@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Concrete Structure Quantity Bot - professionalized build.
+"""Concrete Structure Quantity Bot - sellable rebuild v3.0.
 
 Base architecture follows the five-part BOT flow supplied by the user:
 project setup -> member wizard -> review -> calculation -> result/Cut List.
@@ -210,7 +210,33 @@ def result_kb(lang):
 
 
 def section_kb(lang, items):
-    return kb([[x for x in items]])
+    """Build section keyboards safely.
+
+    Accepts either:
+      [(text, callback), ...]                  # one row
+    or
+      [[(text, callback), ...], [...]]        # multiple rows
+
+    The previous build wrapped an already-rowed list one level too deep,
+    producing tuple/list callback_data and making Telegram buttons appear dead.
+    """
+    if not items:
+        return kb([])
+    if isinstance(items[0], tuple):
+        rows = [items]
+    else:
+        rows = items
+    normalized = []
+    for row in rows:
+        clean_row = []
+        for item in row:
+            if not isinstance(item, (tuple, list)) or len(item) != 2:
+                raise ValueError(f"Invalid keyboard item: {item!r}")
+            text, data = item
+            clean_row.append((str(text), str(data)))
+        if clean_row:
+            normalized.append(clean_row)
+    return kb(normalized)
 
 
 def normalize_number(text):
@@ -510,68 +536,227 @@ async def show_equiv_result(update, context, replacement_dia):
 
 
 async def buttons(update, context):
-    q=update.callback_query; await q.answer(); data=q.data; lang=context.user_data.get('lang','fa')
-    if data=='language': return await q.edit_message_text(TEXT[lang]['language'],reply_markup=language_keyboard())
-    if data.startswith('lang_'):
-        context.user_data['lang']=data.split('_',1)[1]; lang=context.user_data['lang']
-        return await q.edit_message_text(TEXT[lang]['standard'] if not project_ready(context) else TEXT[lang]['welcome'],parse_mode='HTML',reply_markup=standard_keyboard(lang) if not project_ready(context) else main_menu(lang))
-    if data.startswith('std_'): return await choose_standard(update,context)
-    if data.startswith('fc_'): return await choose_concrete(update,context)
-    if data.startswith('grade_'):
-        return await choose_grade(update,context)
-    if data=='home':
-        saved={k:context.user_data.get(k) for k in ('lang','standard','fc','rebar_grade','fy')}; results=context.user_data.get('project_results',[]); context.user_data.clear(); context.user_data.update({k:v for k,v in saved.items() if v is not None}); context.user_data['project_results']=results
-        return await q.edit_message_text(TEXT[lang]['welcome'],parse_mode='HTML',reply_markup=main_menu(lang) if project_ready(context) else standard_keyboard(lang))
-    if data=='cancel':
-        for k in ('kind','step_index','values','history','roof_type','roof_step_index','roof_values','result'): context.user_data.pop(k,None)
-        return await q.edit_message_text(TEXT[lang]['welcome'],parse_mode='HTML',reply_markup=main_menu(lang))
-    if data=='prev':
-        if context.user_data.get('kind')=='roof':
-            idx=context.user_data.get('roof_step_index'); rt=context.user_data.get('roof_type')
-            if idx in (None,0): return await q.edit_message_text(TEXT[lang]['welcome'],parse_mode='HTML',reply_markup=main_menu(lang))
-            idx-=1; context.user_data['roof_step_index']=idx; key=ROOF_STEPS[rt][idx][0]; context.user_data['roof_values'].pop(key,None); f=ROOF_STEPS[rt][idx]
-            return await q.edit_message_text(prompt_text(lang,f[1],idx+1,len(ROOF_STEPS[rt])),parse_mode='HTML',reply_markup=step_kb(lang))
-        kind=context.user_data.get('kind'); idx=context.user_data.get('step_index')
-        if not kind or idx in (None,0): return await q.edit_message_text(TEXT[lang]['welcome'],parse_mode='HTML',reply_markup=main_menu(lang))
-        idx-=1; context.user_data['step_index']=idx; context.user_data['values'].pop(STEPS[kind][idx][0],None); f=STEPS[kind][idx]
-        return await q.edit_message_text(prompt_text(lang,field_label(f,lang),idx+1,len(STEPS[kind])),parse_mode='HTML',reply_markup=step_kb(lang))
-    if data=='do_calculate': return await do_calculate(update,context)
-    if data=='edit_member':
-        if context.user_data.get('kind')=='roof': return await begin_roof(update,context,context.user_data['roof_type'])
-        return await begin_wizard(update,context,context.user_data['kind'])
-    if data=='foundation': return await q.edit_message_text('🧱 <b>فونداسیون</b>',parse_mode='HTML',reply_markup=section_kb(lang,[[('⬛ پی منفرد','foundation_iso'),('▬ پی نواری','foundation_strip')],[('▰ پی گسترده / رادیه','foundation_raft')]]))
-    if data=='columns': return await q.edit_message_text('🏛️ <b>ستون‌ها</b>',parse_mode='HTML',reply_markup=section_kb(lang,[[('▯ ستون مستطیلی','column_rect'),('◯ ستون گرد','column_round')]]))
-    if data=='beams': return await q.edit_message_text('📐 <b>تیرها</b>',parse_mode='HTML',reply_markup=section_kb(lang,[[('📐 تیر اصلی','beam_main'),('📏 تیر فرعی','beam_secondary')]]))
-    if data=='roofs': return await q.edit_message_text('🏠 <b>سیستم سقف</b>\n\nبرای هر سیستم، ورودی‌های اختصاصی استفاده می‌شود؛ ضریب تجربی مخفی وجود ندارد.',parse_mode='HTML',reply_markup=section_kb(lang,[[ (ROOF_TYPES['eps']['name'][lang],'roof_eps') ],[(ROOF_TYPES['clay']['name'][lang],'roof_clay')],[(ROOF_TYPES['waffle']['name'][lang],'roof_waffle')],[(ROOF_TYPES['slab']['name'][lang],'roof_slab')]]))
-    if data=='ties': return await q.edit_message_text('🔗 <b>شناژ و کلاف</b>',parse_mode='HTML',reply_markup=section_kb(lang,[[('🔗 شناژ','tie_beam'),('⛓️ کلاف','tie_cowl')]]))
-    if data=='walls': return await q.edit_message_text('🧱 <b>دیوارها</b>',parse_mode='HTML',reply_markup=section_kb(lang,[[('🏢 دیوار برشی','wall_shear'),('🧱 دیوار حائل','wall_retaining')]]))
-    if data=='stairs': return await begin_wizard(update,context,'stair')
-    mapping={'foundation_iso':'iso','foundation_strip':'strip','foundation_raft':'raft','column_rect':'column_rect','column_round':'column_round','beam_main':'beam','beam_secondary':'beam','tie_beam':'tie','tie_cowl':'tie','wall_shear':'wall','wall_retaining':'wall'}
-    if data in mapping: return await begin_wizard(update,context,mapping[data])
-    if data.startswith('roof_'):
-        rt=data[5:]
-        if rt in ROOF_TYPES: return await begin_roof(update,context,rt)
-    if data=='show_rebar': return await q.edit_message_text(rebar_text(context.user_data.get('result',{}).get('rebar_details',[]),lang),parse_mode='HTML',reply_markup=kb([[(TEXT[lang]['show_cut'],'show_cut'),(TEXT[lang]['result'],'back_result')],[(TEXT[lang]['home'],'home')]]))
-    if data=='show_cut': return await q.edit_message_text(cut_text(context.user_data.get('result',{}).get('rebar_details',[]),lang),parse_mode='HTML',reply_markup=kb([[(TEXT[lang]['show_rebar'],'show_rebar'),(TEXT[lang]['result'],'back_result')],[(TEXT[lang]['home'],'home')]]))
-    if data=='back_result': return await q.edit_message_text(summary_text(context.user_data.get('kind',''),context.user_data.get('result',{}),lang),parse_mode='HTML',reply_markup=result_kb(lang))
-    if data=='new_member':
-        for k in ('kind','step_index','values','history','roof_type','roof_step_index','roof_values','result'): context.user_data.pop(k,None)
-        return await q.edit_message_text(TEXT[lang]['welcome'],parse_mode='HTML',reply_markup=main_menu(lang))
-    if data=='summary': return await q.edit_message_text(project_summary_text(context,lang),parse_mode='HTML',reply_markup=back_kb(lang))
-    if data=='settings':
-        std=project_standard(context); return await q.edit_message_text(f"⚙️ <b>{TEXT[lang]['settings']}</b>\n\n📚 {escape(STANDARDS[std][lang])}\n🧱 C{project_fc(context):g}\n🔩 {escape(project_grade(context))}\nfy={project_fy(context):g} MPa",parse_mode='HTML',reply_markup=kb([[(TEXT[lang]['standard_setting'],'settings_standard')],[(TEXT[lang]['materials'],'settings_materials')],[(TEXT[lang]['language'],'language')],[(TEXT[lang]['home'],'home')]]))
-    if data=='settings_standard': return await q.edit_message_text(TEXT[lang]['standard'],parse_mode='HTML',reply_markup=standard_keyboard(lang))
-    if data=='equiv': return await begin_equivalency(update,context)
-    if data.startswith('equiv_current_'):
-        d=int(data.rsplit('_',1)[1]); context.user_data['equiv']['current_dia']=d; context.user_data['equiv_step']=2; return await q.edit_message_text(f"3️⃣ {TEXT[lang]['replacement_dia']}",reply_markup=kb([[('Φ'+str(x),f'equiv_replace_{x}') for x in (8,10,12,14,16,18,20,22,25,28,32)]]))
-    if data.startswith('equiv_replace_'): return await show_equiv_result(update,context,int(data.rsplit('_',1)[1]))
-    if data=='natural_input':
-        context.user_data['natural_mode']=True; return await q.edit_message_text(f"✍️ <b>{TEXT[lang]['natural']}</b>\n\nمثال: <code>stirrups 8 spacing 20 length 7</code>",parse_mode='HTML',reply_markup=back_kb(lang))
-    if data=='multi_column':
-        context.user_data['multi_mode']='input'; return await q.edit_message_text(f"🏢 <b>{TEXT[lang]['multi_column']}</b>\n\nمثال: <code>۱۰ طبقه، ارتفاع هر طبقه ۳.۲، ۱۶ میلگرد ۲۰</code>",parse_mode='HTML',reply_markup=back_kb(lang))
-    if data=='help': return await q.edit_message_text(f"ℹ️ <b>{TEXT[lang]['help']}</b>\n\nاین ابزار برای برآورد کمی بتن و میلگرد است. Cut List بر مبنای شاخه ۱۲ متری گزارش می‌شود. خروجی جایگزین نقشه و محاسبات نهایی مهندس محاسب نیست. استاندارد China بدون fy صریح پذیرفته نمی‌شود.",parse_mode='HTML',reply_markup=back_kb(lang))
-    if data=='settings_materials': return await q.edit_message_text(TEXT[lang]['concrete'],reply_markup=concrete_keyboard(lang))
-    return await q.edit_message_text(TEXT[lang]['welcome'],parse_mode='HTML',reply_markup=main_menu(lang))
+    """Single, deterministic callback dispatcher.
+
+    Every inline keyboard callback must pass through this function (except the
+    optional language handler removed from main below).  Unknown callbacks are
+    surfaced to the user instead of silently falling back to Home.
+    """
+    q = update.callback_query
+    if q is None:
+        return
+    data = str(q.data or '')
+    lang = context.user_data.get('lang', 'fa')
+    try:
+        await q.answer()
+
+        if data == 'language':
+            return await q.edit_message_text(TEXT[lang]['language'], reply_markup=language_keyboard())
+        if data.startswith('lang_'):
+            new_lang = data.split('_', 1)[1]
+            if new_lang not in TEXT:
+                raise ValueError('Unsupported language.')
+            # Preserve project data when changing language.
+            context.user_data['lang'] = new_lang
+            lang = new_lang
+            ready = project_ready(context)
+            return await q.edit_message_text(
+                TEXT[lang]['welcome'] if ready else TEXT[lang]['standard'],
+                parse_mode='HTML',
+                reply_markup=main_menu(lang) if ready else standard_keyboard(lang),
+            )
+
+        if data.startswith('std_'):
+            return await choose_standard(update, context)
+        if data.startswith('fc_'):
+            return await choose_concrete(update, context)
+        if data.startswith('grade_'):
+            return await choose_grade(update, context)
+
+        if data == 'home':
+            saved = {k: context.user_data.get(k) for k in ('lang', 'standard', 'fc', 'rebar_grade', 'fy')}
+            results = context.user_data.get('project_results', [])
+            context.user_data.clear()
+            context.user_data.update({k: v for k, v in saved.items() if v is not None})
+            context.user_data['project_results'] = results
+            lang = context.user_data.get('lang', 'fa')
+            return await q.edit_message_text(
+                TEXT[lang]['welcome'], parse_mode='HTML',
+                reply_markup=main_menu(lang) if project_ready(context) else standard_keyboard(lang)
+            )
+
+        if data == 'cancel':
+            for k in ('kind', 'step_index', 'values', 'history', 'roof_type', 'roof_name',
+                      'roof_step_index', 'roof_values', 'result', 'natural_mode',
+                      'multi_mode', 'equiv', 'equiv_step', 'awaiting_fy'):
+                context.user_data.pop(k, None)
+            return await q.edit_message_text(TEXT[lang]['welcome'], parse_mode='HTML', reply_markup=main_menu(lang))
+
+        if data == 'prev':
+            if context.user_data.get('kind') == 'roof':
+                idx = context.user_data.get('roof_step_index')
+                rt = context.user_data.get('roof_type')
+                if rt not in ROOF_STEPS or idx in (None, 0):
+                    return await q.edit_message_text(TEXT[lang]['welcome'], parse_mode='HTML', reply_markup=main_menu(lang))
+                idx -= 1
+                context.user_data['roof_step_index'] = idx
+                key = ROOF_STEPS[rt][idx][0]
+                context.user_data['roof_values'].pop(key, None)
+                f = ROOF_STEPS[rt][idx]
+                return await q.edit_message_text(prompt_text(lang, f[1], idx + 1, len(ROOF_STEPS[rt])),
+                                                 parse_mode='HTML', reply_markup=step_kb(lang))
+            kind = context.user_data.get('kind')
+            idx = context.user_data.get('step_index')
+            if not kind or kind not in STEPS or idx in (None, 0):
+                return await q.edit_message_text(TEXT[lang]['welcome'], parse_mode='HTML', reply_markup=main_menu(lang))
+            idx -= 1
+            context.user_data['step_index'] = idx
+            context.user_data['values'].pop(STEPS[kind][idx][0], None)
+            f = STEPS[kind][idx]
+            return await q.edit_message_text(prompt_text(lang, field_label(f, lang), idx + 1, len(STEPS[kind])),
+                                             parse_mode='HTML', reply_markup=step_kb(lang))
+
+        if data == 'do_calculate':
+            return await do_calculate(update, context)
+
+        if data == 'edit_member':
+            if context.user_data.get('kind') == 'roof':
+                return await begin_roof(update, context, context.user_data['roof_type'])
+            return await begin_wizard(update, context, context.user_data['kind'])
+
+        # Main sections.
+        section_routes = {
+            'foundation': ('🧱 <b>فونداسیون</b>', [[('⬛ پی منفرد', 'foundation_iso'), ('▬ پی نواری', 'foundation_strip')],
+                                                   [('▰ پی گسترده / رادیه', 'foundation_raft')]]),
+            'columns': ('🏛️ <b>ستون‌ها</b>', [[('▯ ستون مستطیلی', 'column_rect'), ('◯ ستون گرد', 'column_round')]]),
+            'beams': ('📐 <b>تیرها</b>', [[('📐 تیر اصلی', 'beam_main'), ('📏 تیر فرعی', 'beam_secondary')]]),
+            'ties': ('🔗 <b>شناژ و کلاف</b>', [[('🔗 شناژ', 'tie_beam'), ('⛓️ کلاف', 'tie_cowl')]]),
+            'walls': ('🧱 <b>دیوارها</b>', [[('🏢 دیوار برشی', 'wall_shear'), ('🧱 دیوار حائل', 'wall_retaining')]]),
+        }
+        if data in section_routes:
+            title, rows = section_routes[data]
+            return await q.edit_message_text(title, parse_mode='HTML', reply_markup=section_kb(lang, rows))
+
+        if data == 'roofs':
+            rows = [
+                [(ROOF_TYPES['eps']['name'][lang], 'roof_eps')],
+                [(ROOF_TYPES['clay']['name'][lang], 'roof_clay')],
+                [(ROOF_TYPES['waffle']['name'][lang], 'roof_waffle')],
+                [(ROOF_TYPES['slab']['name'][lang], 'roof_slab')],
+            ]
+            return await q.edit_message_text(
+                '🏠 <b>سیستم سقف</b>\n\nبرای هر سیستم، ورودی‌های اختصاصی استفاده می‌شود؛ ضریب تجربی مخفی وجود ندارد.',
+                parse_mode='HTML', reply_markup=section_kb(lang, rows)
+            )
+
+        mapping = {
+            'foundation_iso': 'iso', 'foundation_strip': 'strip', 'foundation_raft': 'raft',
+            'column_rect': 'column_rect', 'column_round': 'column_round',
+            'beam_main': 'beam', 'beam_secondary': 'beam',
+            'tie_beam': 'tie', 'tie_cowl': 'tie',
+            'wall_shear': 'wall', 'wall_retaining': 'wall',
+        }
+        if data in mapping:
+            return await begin_wizard(update, context, mapping[data])
+
+        if data.startswith('roof_'):
+            rt = data[5:]
+            if rt in ROOF_TYPES:
+                return await begin_roof(update, context, rt)
+
+        if data == 'stairs':
+            return await begin_wizard(update, context, 'stair')
+
+        if data == 'show_rebar':
+            result = context.user_data.get('result') or {}
+            return await q.edit_message_text(
+                rebar_text(result.get('rebar_details', []), lang), parse_mode='HTML',
+                reply_markup=kb([[(TEXT[lang]['show_cut'], 'show_cut'), (TEXT[lang]['result'], 'back_result')],
+                                 [(TEXT[lang]['home'], 'home')]])
+            )
+        if data == 'show_cut':
+            result = context.user_data.get('result') or {}
+            return await q.edit_message_text(
+                cut_text(result.get('rebar_details', []), lang), parse_mode='HTML',
+                reply_markup=kb([[(TEXT[lang]['show_rebar'], 'show_rebar'), (TEXT[lang]['result'], 'back_result')],
+                                 [(TEXT[lang]['home'], 'home')]])
+            )
+        if data == 'back_result':
+            return await q.edit_message_text(
+                summary_text(context.user_data.get('kind', ''), context.user_data.get('result', {}), lang),
+                parse_mode='HTML', reply_markup=result_kb(lang)
+            )
+        if data == 'new_member':
+            for k in ('kind', 'step_index', 'values', 'history', 'roof_type', 'roof_name',
+                      'roof_step_index', 'roof_values', 'result', 'natural_mode', 'multi_mode'):
+                context.user_data.pop(k, None)
+            return await q.edit_message_text(TEXT[lang]['welcome'], parse_mode='HTML', reply_markup=main_menu(lang))
+        if data == 'summary':
+            return await q.edit_message_text(project_summary_text(context, lang), parse_mode='HTML', reply_markup=back_kb(lang))
+        if data == 'settings':
+            if not project_ready(context):
+                return await q.edit_message_text(TEXT[lang]['standard'], parse_mode='HTML', reply_markup=standard_keyboard(lang))
+            std = project_standard(context)
+            return await q.edit_message_text(
+                f"⚙️ <b>{TEXT[lang]['settings']}</b>\n\n📚 {escape(STANDARDS[std][lang])}\n"
+                f"🧱 C{project_fc(context):g}\n🔩 {escape(project_grade(context))}\nfy={project_fy(context):g} MPa",
+                parse_mode='HTML',
+                reply_markup=kb([[(TEXT[lang]['standard_setting'], 'settings_standard')],
+                                 [(TEXT[lang]['materials'], 'settings_materials')],
+                                 [(TEXT[lang]['language'], 'language')],
+                                 [(TEXT[lang]['home'], 'home')]])
+            )
+        if data == 'settings_standard':
+            return await q.edit_message_text(TEXT[lang]['standard'], parse_mode='HTML', reply_markup=standard_keyboard(lang))
+        if data == 'settings_materials':
+            return await q.edit_message_text(TEXT[lang]['concrete'], reply_markup=concrete_keyboard(lang))
+
+        if data == 'equiv':
+            return await begin_equivalency(update, context)
+        if data.startswith('equiv_current_'):
+            d = int(data.rsplit('_', 1)[1])
+            context.user_data.setdefault('equiv', {})['current_dia'] = d
+            context.user_data['equiv_step'] = 2
+            return await q.edit_message_text(
+                f"3️⃣ {TEXT[lang]['replacement_dia']}",
+                reply_markup=kb([[('Φ' + str(x), f'equiv_replace_{x}') for x in (8,10,12,14,16,18,20,22,25,28,32)],
+                                 [(TEXT[lang]['home'], 'home')]])
+            )
+        if data.startswith('equiv_replace_'):
+            return await show_equiv_result(update, context, int(data.rsplit('_', 1)[1]))
+
+        if data == 'natural_input':
+            context.user_data['natural_mode'] = True
+            return await q.edit_message_text(
+                f"✍️ <b>{TEXT[lang]['natural']}</b>\n\nمثال: <code>stirrups 8 spacing 20 length 7</code>",
+                parse_mode='HTML', reply_markup=back_kb(lang)
+            )
+        if data == 'multi_column':
+            context.user_data['multi_mode'] = 'input'
+            return await q.edit_message_text(
+                f"🏢 <b>{TEXT[lang]['multi_column']}</b>\n\nمثال: <code>۱۰ طبقه، ارتفاع هر طبقه ۳.۲، ۱۶ میلگرد ۲۰</code>",
+                parse_mode='HTML', reply_markup=back_kb(lang)
+            )
+        if data == 'help':
+            return await q.edit_message_text(
+                f"ℹ️ <b>{TEXT[lang]['help']}</b>\n\nاین ابزار برای برآورد کمی بتن و میلگرد است. "
+                f"Cut List بر مبنای شاخه ۱۲ متری گزارش می‌شود. خروجی جایگزین نقشه و محاسبات نهایی مهندس محاسب نیست. "
+                f"استاندارد China بدون fy صریح پذیرفته نمی‌شود.",
+                parse_mode='HTML', reply_markup=back_kb(lang)
+            )
+
+        logger.warning('Unknown callback_data=%r user=%s', data, getattr(update.effective_user, 'id', None))
+        return await q.edit_message_text(
+            f"⚠️ <b>دکمه ناشناخته</b>\n\n<code>{escape(data)}</code>\n\nمنوی اصلی:",
+            parse_mode='HTML', reply_markup=main_menu(lang)
+        )
+    except Exception as exc:
+        logger.exception('Callback failed: %r', data)
+        try:
+            await q.edit_message_text(TEXT[lang]['calc_error'].format(escape(str(exc))),
+                                      parse_mode='HTML', reply_markup=main_menu(lang))
+        except Exception:
+            logger.exception('Could not send callback error message')
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -598,6 +783,7 @@ async def receive_router(update, context):
         lang=context.user_data.get('lang','fa')
         try:
             parsed=parse_natural_input(update.message.text)
+            context.user_data['natural_mode']=False
             f=parsed.get('fields',{})
             if not f: raise ValueError('No structured fields detected.')
             msg='✍️ <b>Parsed input</b>\n\n<pre>'+escape(str(f))+'</pre>\n\n⚠️ Before using it in a calculation, verify the interpreted fields.'
@@ -638,7 +824,6 @@ def main():
     webhook_url=f'{RENDER_EXTERNAL_URL}/telegram'
     app=Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler('start',start))
-    app.add_handler(CallbackQueryHandler(choose_language,pattern=r'^lang_(fa|en|ar|zh)$'))
     app.add_handler(CallbackQueryHandler(buttons))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,receive_router))
     app.add_error_handler(error_handler)
