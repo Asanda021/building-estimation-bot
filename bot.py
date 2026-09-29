@@ -1,6 +1,7 @@
 import os
-import logging
-from math import ceil
+import html
+import traceback
+from collections import Counter
 
 from telegram import (
     Update,
@@ -10,7 +11,7 @@ from telegram import (
     KeyboardButton,
 )
 from telegram.ext import (
-    Application,
+    ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
     MessageHandler,
@@ -22,6 +23,7 @@ from calculations import (
     isolated_footing,
     strip_footing,
     raft_foundation,
+    total_foundation_result,
     column_rectangular,
     column_round,
     beam,
@@ -32,96 +34,740 @@ from calculations import (
 )
 
 
-# =========================================================
-# تنظیمات
-# =========================================================
-
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-PORT = int(os.getenv("PORT", "10000"))
-RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
-
-logger = logging.getLogger(__name__)
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN environment variable is not set")
 
 
 # =========================================================
-# ابزارهای عمومی
+# LANGUAGE
 # =========================================================
 
-PERSIAN_DIGITS = str.maketrans(
-    "۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩",
-    "01234567890123456789",
-)
+LANGS = {
+    "fa": "🇮🇷 فارسی",
+    "ar": "🇸🇦 العربية",
+    "en": "🇬🇧 English",
+    "zh": "🇨🇳 中文",
+}
 
 
-def normalize_number(value: str) -> float:
-    """
-    تبدیل اعداد فارسی/عربی به انگلیسی
-    و پشتیبانی از , و ، و ممیز فارسی.
-    """
-    value = str(value).strip().translate(PERSIAN_DIGITS)
-    value = value.replace("٬", "").replace(",", "")
-    value = value.replace("،", "")
-    value = value.replace("٫", ".")
-    value = value.replace(" ", "")
+T = {
+    "fa": {
+        "home_title": "🏗️ اسکلت بتنی",
+        "foundation": "🧱 فونداسیون",
+        "columns": "🏛️ ستون‌ها",
+        "beams": "📐 تیرها",
+        "roofs": "🏠 سقف‌ها",
+        "stairs": "🪜 راه‌پله",
+        "ties": "🔗 شناژ و کلاف",
+        "walls": "🧱 دیوارها",
+        "summary": "📊 خلاصه پروژه",
+        "settings": "⚙️ تنظیمات",
+        "help": "ℹ️ راهنما",
+        "home": "🏠 خانه",
+        "menu": "☰ منو",
+        "back": "🔙 بازگشت",
+        "cancel": "❌ لغو",
+        "language": "🌐 زبان",
+        "language_changed": "زبان با موفقیت تغییر کرد.",
+        "choose_language": "زبان موردنظر را انتخاب کنید:",
+        "start": "سلام 👋\nبه ربات برآورد اسکلت بتنی خوش آمدید.",
+        "cancelled": "عملیات لغو شد.",
+        "invalid_number": "❌ مقدار واردشده معتبر نیست.\nلطفاً فقط عدد وارد کنید.",
+        "positive_number": "❌ مقدار باید بزرگ‌تر از صفر باشد.",
+        "zero_allowed": "برای حذف این بخش عدد 0 وارد کنید.",
+        "done": "✅ محاسبه با موفقیت انجام شد.",
+        "no_summary": "هنوز محاسبه‌ای برای پروژه ثبت نشده است.",
+        "project_summary": "📊 خلاصه پروژه",
+        "rebar": "🔩 جزئیات میلگرد",
+        "cutlist": "✂️ Cut List",
+        "new_calc": "🔄 محاسبه جدید",
+        "save_result": "نتیجه در خلاصه پروژه ثبت شد.",
+        "help_text": (
+            "ℹ️ راهنما\n\n"
+            "این ربات برای برآورد مقادیر اسکلت بتنی طراحی شده است.\n\n"
+            "مقادیر بتن، میلگرد، طول قطعات و Cut List بر اساس "
+            "اطلاعات واردشده محاسبه می‌شوند.\n\n"
+            "⚠️ این ابزار برای متره و برآورد است و جایگزین طراحی سازه، "
+            "نقشه محاسباتی و کنترل مهندس محاسب نیست."
+        ),
 
-    return float(value)
+        "isolated": "پی منفرد",
+        "strip": "پی نواری",
+        "raft": "پی گسترده (رادیه)",
+
+        "rect_column": "ستون مربعی/مستطیلی",
+        "round_column": "ستون گرد",
+
+        "main_beam": "تیر اصلی",
+        "secondary_beam": "تیر فرعی",
+
+        "tie_beam": "شناژ",
+        "tie_collar": "کلاف",
+
+        "shear_wall": "دیوار برشی",
+        "retaining_wall": "دیوار حائل",
+
+        "stair_slab": "راه‌پله",
+
+        "roof_joist_foam": "تیرچه یونولیتی",
+        "roof_joist_clay": "تیرچه سفالی",
+        "roof_double_joist": "تیرچه دوبل",
+        "roof_keromet": "کرومیت",
+        "roof_composite": "کامپوزیت",
+        "roof_deck": "عرشه فولادی",
+        "roof_slab": "دال بتنی",
+        "roof_waffle": "وافل",
+
+        "count": "تعداد",
+        "length": "طول",
+        "width": "عرض",
+        "height": "ارتفاع",
+        "thickness": "ضخامت",
+        "diameter": "قطر",
+        "spacing": "فاصله",
+        "cover": "کاور",
+        "lap": "اورلپ",
+        "lean_length": "طول بتن مگر",
+        "lean_width": "عرض بتن مگر",
+        "lean_thickness": "ضخامت بتن مگر",
+        "pedestal_length": "طول پدستال",
+        "pedestal_width": "عرض پدستال",
+        "pedestal_height": "ارتفاع پدستال",
+
+        "bottom_diameter": "قطر میلگرد پایین",
+        "bottom_spacing": "فاصله میلگرد پایین",
+        "top_diameter": "قطر میلگرد بالا",
+        "top_spacing": "فاصله میلگرد بالا",
+
+        "longitudinal_diameter": "قطر میلگرد طولی",
+        "longitudinal_count": "تعداد میلگرد طولی",
+        "transverse_diameter": "قطر میلگرد عرضی",
+        "transverse_spacing": "فاصله میلگرد عرضی",
+
+        "top_longitudinal_diameter": "قطر میلگرد طولی بالا",
+        "top_longitudinal_count": "تعداد میلگرد طولی بالا",
+        "top_transverse_diameter": "قطر میلگرد عرضی بالا",
+        "top_transverse_spacing": "فاصله میلگرد عرضی بالا",
+
+        "bottom_x_diameter": "قطر میلگرد پایین X",
+        "bottom_x_spacing": "فاصله میلگرد پایین X",
+        "bottom_y_diameter": "قطر میلگرد پایین Y",
+        "bottom_y_spacing": "فاصله میلگرد پایین Y",
+        "top_x_diameter": "قطر میلگرد بالا X",
+        "top_x_spacing": "فاصله میلگرد بالا X",
+        "top_y_diameter": "قطر میلگرد بالا Y",
+        "top_y_spacing": "فاصله میلگرد بالا Y",
+
+        "main_diameter": "قطر میلگرد اصلی",
+        "main_count": "تعداد میلگرد اصلی",
+        "main_top_count": "تعداد میلگرد بالایی",
+        "main_bottom_count": "تعداد میلگرد پایینی",
+        "stirrup_diameter": "قطر خاموت",
+        "stirrup_spacing": "فاصله خاموت",
+
+        "vertical_diameter": "قطر میلگرد قائم",
+        "vertical_spacing": "فاصله میلگرد قائم",
+        "horizontal_diameter": "قطر میلگرد افقی",
+        "horizontal_spacing": "فاصله میلگرد افقی",
+
+        "area": "مساحت سقف",
+        "rebar_kg_m2": "میلگرد به ازای هر مترمربع",
+        "steps": "تعداد پله",
+        "riser": "ارتفاع کف تا کف پله",
+        "tread": "عرض کف پله",
+
+        "ask_count": "تعداد را وارد کنید:",
+        "ask_length": "طول را وارد کنید (متر):",
+        "ask_width": "عرض را وارد کنید (متر):",
+        "ask_height": "ارتفاع را وارد کنید (متر):",
+        "ask_thickness": "ضخامت را وارد کنید (متر):",
+        "ask_diameter": "قطر میلگرد را وارد کنید (میلی‌متر):",
+        "ask_spacing": "فاصله را وارد کنید (میلی‌متر):",
+        "ask_cover": "کاور را وارد کنید (میلی‌متر):",
+        "ask_lap": "اورلپ را به درصد وارد کنید:",
+        "ask_zero": "برای حذف این بخش عدد 0 وارد کنید.",
+
+        "result_title": "🏗️ نتیجه محاسبه",
+        "concrete": "بتن",
+        "lean_concrete": "بتن مگر",
+        "pedestal": "بتن پدستال",
+        "total_concrete": "کل بتن",
+        "total_rebar": "کل میلگرد",
+
+        "piece": "قطعه",
+        "piece_count": "تعداد",
+        "piece_length": "طول هر قطعه",
+        "weight": "وزن",
+        "bars12": "شاخه ۱۲ متری",
+        "waste": "پرت",
+        "diameter_label": "قطر",
+        "bar": "میلگرد",
+        "branch": "شاخه",
+        "branch_length": "طول شاخه",
+        "pieces": "قطعات",
+        "description": "شرح",
+
+        "no_data": "داده‌ای برای نمایش وجود ندارد.",
+    },
+
+    "ar": {
+        "home_title": "🏗️ الهيكل الخرساني",
+        "foundation": "🧱 الأساسات",
+        "columns": "🏛️ الأعمدة",
+        "beams": "📐 الكمرات",
+        "roofs": "🏠 الأسقف",
+        "stairs": "🪜 الدرج",
+        "ties": "🔗 الميدات والرباط",
+        "walls": "🧱 الجدران",
+        "summary": "📊 ملخص المشروع",
+        "settings": "⚙️ الإعدادات",
+        "help": "ℹ️ المساعدة",
+        "home": "🏠 الرئيسية",
+        "menu": "☰ القائمة",
+        "back": "🔙 رجوع",
+        "cancel": "❌ إلغاء",
+        "language": "🌐 اللغة",
+        "language_changed": "تم تغيير اللغة بنجاح.",
+        "choose_language": "اختر اللغة:",
+        "start": "مرحباً 👋\nأهلاً بك في روبوت تقدير الهيكل الخرساني.",
+        "cancelled": "تم إلغاء العملية.",
+        "invalid_number": "❌ القيمة غير صحيحة. أدخل رقماً فقط.",
+        "positive_number": "❌ يجب أن تكون القيمة أكبر من صفر.",
+        "zero_allowed": "أدخل 0 لإلغاء هذا الجزء.",
+        "done": "✅ تمت العملية بنجاح.",
+        "no_summary": "لم يتم تسجيل أي حساب للمشروع بعد.",
+        "project_summary": "📊 ملخص المشروع",
+        "rebar": "🔩 تفاصيل حديد التسليح",
+        "cutlist": "✂️ قائمة القص",
+        "new_calc": "🔄 حساب جديد",
+        "save_result": "تم حفظ النتيجة في ملخص المشروع.",
+        "help_text": (
+            "ℹ️ المساعدة\n\n"
+            "هذا الروبوت مخصص لتقدير كميات الهيكل الخرساني.\n\n"
+            "يحسب الخرسانة والتسليح وأطوال القطع وقائمة القص "
+            "حسب البيانات المدخلة.\n\n"
+            "⚠️ الأداة للمتر والحصر ولا تغني عن التصميم الإنشائي "
+            "والمخططات ومراجعة المهندس."
+        ),
+
+        "isolated": "قاعدة منفردة",
+        "strip": "قاعدة شريطية",
+        "raft": "لبشة",
+
+        "rect_column": "عمود مربع/مستطيل",
+        "round_column": "عمود دائري",
+
+        "main_beam": "كمرة رئيسية",
+        "secondary_beam": "كمرة ثانوية",
+
+        "tie_beam": "ميدة",
+        "tie_collar": "رباط",
+
+        "shear_wall": "جدار قص",
+        "retaining_wall": "جدار ساند",
+        "stair_slab": "درج",
+
+        "roof_joist_foam": "بلوك فوم",
+        "roof_joist_clay": "بلوك فخاري",
+        "roof_double_joist": "جوائز مزدوجة",
+        "roof_keromet": "كروميت",
+        "roof_composite": "سقف مركب",
+        "roof_deck": "عرشة فولاذية",
+        "roof_slab": "بلاطة خرسانية",
+        "roof_waffle": "وافل",
+
+        "count": "العدد",
+        "length": "الطول",
+        "width": "العرض",
+        "height": "الارتفاع",
+        "thickness": "السماكة",
+        "diameter": "القطر",
+        "spacing": "المسافة",
+        "cover": "الغطاء الخرساني",
+        "lap": "التراكب",
+        "lean_length": "طول خرسانة النظافة",
+        "lean_width": "عرض خرسانة النظافة",
+        "lean_thickness": "سماكة خرسانة النظافة",
+        "pedestal_length": "طول البيدستال",
+        "pedestal_width": "عرض البيدستال",
+        "pedestal_height": "ارتفاع البيدستال",
+
+        "bottom_diameter": "قطر الحديد السفلي",
+        "bottom_spacing": "مسافة الحديد السفلي",
+        "top_diameter": "قطر الحديد العلوي",
+        "top_spacing": "مسافة الحديد العلوي",
+
+        "longitudinal_diameter": "قطر الحديد الطولي",
+        "longitudinal_count": "عدد الحديد الطولي",
+        "transverse_diameter": "قطر الحديد العرضي",
+        "transverse_spacing": "مسافة الحديد العرضي",
+
+        "top_longitudinal_diameter": "قطر الحديد الطولي العلوي",
+        "top_longitudinal_count": "عدد الحديد الطولي العلوي",
+        "top_transverse_diameter": "قطر الحديد العرضي العلوي",
+        "top_transverse_spacing": "مسافة الحديد العرضي العلوي",
+
+        "bottom_x_diameter": "قطر الحديد السفلي X",
+        "bottom_x_spacing": "مسافة الحديد السفلي X",
+        "bottom_y_diameter": "قطر الحديد السفلي Y",
+        "bottom_y_spacing": "مسافة الحديد السفلي Y",
+        "top_x_diameter": "قطر الحديد العلوي X",
+        "top_x_spacing": "مسافة الحديد العلوي X",
+        "top_y_diameter": "قطر الحديد العلوي Y",
+        "top_y_spacing": "مسافة الحديد العلوي Y",
+
+        "main_diameter": "قطر الحديد الرئيسي",
+        "main_count": "عدد الحديد الرئيسي",
+        "main_top_count": "عدد الحديد العلوي",
+        "main_bottom_count": "عدد الحديد السفلي",
+        "stirrup_diameter": "قطر الكانة",
+        "stirrup_spacing": "مسافة الكانات",
+
+        "vertical_diameter": "قطر الحديد الرأسي",
+        "vertical_spacing": "مسافة الحديد الرأسي",
+        "horizontal_diameter": "قطر الحديد الأفقي",
+        "horizontal_spacing": "مسافة الحديد الأفقي",
+
+        "area": "مساحة السقف",
+        "rebar_kg_m2": "حديد لكل متر مربع",
+        "steps": "عدد الدرجات",
+        "riser": "ارتفاع القائمة",
+        "tread": "عرض النائمة",
+
+        "ask_count": "أدخل العدد:",
+        "ask_length": "أدخل الطول (متر):",
+        "ask_width": "أدخل العرض (متر):",
+        "ask_height": "أدخل الارتفاع (متر):",
+        "ask_thickness": "أدخل السماكة (متر):",
+        "ask_diameter": "أدخل قطر الحديد (ملم):",
+        "ask_spacing": "أدخل المسافة (ملم):",
+        "ask_cover": "أدخل الغطاء الخرساني (ملم):",
+        "ask_lap": "أدخل نسبة التراكب:",
+        "ask_zero": "أدخل 0 لإلغاء هذا الجزء.",
+
+        "result_title": "🏗️ نتيجة الحساب",
+        "concrete": "الخرسانة",
+        "lean_concrete": "خرسانة النظافة",
+        "pedestal": "خرسانة البيدستال",
+        "total_concrete": "إجمالي الخرسانة",
+        "total_rebar": "إجمالي الحديد",
+
+        "piece": "قطعة",
+        "piece_count": "العدد",
+        "piece_length": "طول القطعة",
+        "weight": "الوزن",
+        "bars12": "أعواد 12 متر",
+        "waste": "الهدر",
+        "diameter_label": "القطر",
+        "bar": "حديد",
+        "branch": "عود",
+        "branch_length": "طول العود",
+        "pieces": "القطع",
+        "description": "الوصف",
+
+        "no_data": "لا توجد بيانات للعرض.",
+    },
+
+    "en": {
+        "home_title": "🏗️ Concrete Structure",
+        "foundation": "🧱 Foundations",
+        "columns": "🏛️ Columns",
+        "beams": "📐 Beams",
+        "roofs": "🏠 Roofs",
+        "stairs": "🪜 Stairs",
+        "ties": "🔗 Tie Beams",
+        "walls": "🧱 Walls",
+        "summary": "📊 Project Summary",
+        "settings": "⚙️ Settings",
+        "help": "ℹ️ Help",
+        "home": "🏠 Home",
+        "menu": "☰ Menu",
+        "back": "🔙 Back",
+        "cancel": "❌ Cancel",
+        "language": "🌐 Language",
+        "language_changed": "Language changed successfully.",
+        "choose_language": "Choose language:",
+        "start": "Hello 👋\nWelcome to the Concrete Structure Quantity Bot.",
+        "cancelled": "Operation cancelled.",
+        "invalid_number": "❌ Invalid value. Please enter a number.",
+        "positive_number": "❌ Value must be greater than zero.",
+        "zero_allowed": "Enter 0 to remove this part.",
+        "done": "✅ Calculation completed successfully.",
+        "no_summary": "No calculation has been recorded yet.",
+        "project_summary": "📊 Project Summary",
+        "rebar": "🔩 Rebar Details",
+        "cutlist": "✂️ Cut List",
+        "new_calc": "🔄 New Calculation",
+        "save_result": "Result saved to project summary.",
+        "help_text": (
+            "ℹ️ Help\n\n"
+            "This bot estimates concrete structure quantities.\n\n"
+            "It calculates concrete, reinforcement, piece lengths "
+            "and cutting lists from the entered data.\n\n"
+            "⚠️ This is a quantity takeoff tool and does not replace "
+            "structural design, drawings or engineering review."
+        ),
+
+        "isolated": "Isolated Footing",
+        "strip": "Strip Footing",
+        "raft": "Raft Foundation",
+
+        "rect_column": "Rectangular Column",
+        "round_column": "Round Column",
+
+        "main_beam": "Main Beam",
+        "secondary_beam": "Secondary Beam",
+
+        "tie_beam": "Tie Beam",
+        "tie_collar": "Collar Beam",
+
+        "shear_wall": "Shear Wall",
+        "retaining_wall": "Retaining Wall",
+
+        "stair_slab": "Stair",
+
+        "roof_joist_foam": "Foam Joist",
+        "roof_joist_clay": "Clay Joist",
+        "roof_double_joist": "Double Joist",
+        "roof_keromet": "Kromit",
+        "roof_composite": "Composite",
+        "roof_deck": "Steel Deck",
+        "roof_slab": "Concrete Slab",
+        "roof_waffle": "Waffle",
+
+        "count": "Count",
+        "length": "Length",
+        "width": "Width",
+        "height": "Height",
+        "thickness": "Thickness",
+        "diameter": "Diameter",
+        "spacing": "Spacing",
+        "cover": "Concrete Cover",
+        "lap": "Lap",
+        "lean_length": "Lean Concrete Length",
+        "lean_width": "Lean Concrete Width",
+        "lean_thickness": "Lean Concrete Thickness",
+        "pedestal_length": "Pedestal Length",
+        "pedestal_width": "Pedestal Width",
+        "pedestal_height": "Pedestal Height",
+
+        "bottom_diameter": "Bottom Rebar Diameter",
+        "bottom_spacing": "Bottom Rebar Spacing",
+        "top_diameter": "Top Rebar Diameter",
+        "top_spacing": "Top Rebar Spacing",
+
+        "longitudinal_diameter": "Longitudinal Rebar Diameter",
+        "longitudinal_count": "Longitudinal Rebar Count",
+        "transverse_diameter": "Transverse Rebar Diameter",
+        "transverse_spacing": "Transverse Rebar Spacing",
+
+        "top_longitudinal_diameter": "Top Longitudinal Diameter",
+        "top_longitudinal_count": "Top Longitudinal Count",
+        "top_transverse_diameter": "Top Transverse Diameter",
+        "top_transverse_spacing": "Top Transverse Spacing",
+
+        "bottom_x_diameter": "Bottom X Diameter",
+        "bottom_x_spacing": "Bottom X Spacing",
+        "bottom_y_diameter": "Bottom Y Diameter",
+        "bottom_y_spacing": "Bottom Y Spacing",
+        "top_x_diameter": "Top X Diameter",
+        "top_x_spacing": "Top X Spacing",
+        "top_y_diameter": "Top Y Diameter",
+        "top_y_spacing": "Top Y Spacing",
+
+        "main_diameter": "Main Rebar Diameter",
+        "main_count": "Main Rebar Count",
+        "main_top_count": "Top Rebar Count",
+        "main_bottom_count": "Bottom Rebar Count",
+        "stirrup_diameter": "Stirrup Diameter",
+        "stirrup_spacing": "Stirrup Spacing",
+
+        "vertical_diameter": "Vertical Rebar Diameter",
+        "vertical_spacing": "Vertical Rebar Spacing",
+        "horizontal_diameter": "Horizontal Rebar Diameter",
+        "horizontal_spacing": "Horizontal Rebar Spacing",
+
+        "area": "Roof Area",
+        "rebar_kg_m2": "Rebar kg/m²",
+        "steps": "Number of Steps",
+        "riser": "Riser Height",
+        "tread": "Tread Width",
+
+        "ask_count": "Enter count:",
+        "ask_length": "Enter length (m):",
+        "ask_width": "Enter width (m):",
+        "ask_height": "Enter height (m):",
+        "ask_thickness": "Enter thickness (m):",
+        "ask_diameter": "Enter rebar diameter (mm):",
+        "ask_spacing": "Enter spacing (mm):",
+        "ask_cover": "Enter concrete cover (mm):",
+        "ask_lap": "Enter lap percentage:",
+        "ask_zero": "Enter 0 to remove this part.",
+
+        "result_title": "🏗️ Calculation Result",
+        "concrete": "Concrete",
+        "lean_concrete": "Lean Concrete",
+        "pedestal": "Pedestal Concrete",
+        "total_concrete": "Total Concrete",
+        "total_rebar": "Total Rebar",
+
+        "piece": "Piece",
+        "piece_count": "Count",
+        "piece_length": "Piece Length",
+        "weight": "Weight",
+        "bars12": "12 m Bars",
+        "waste": "Waste",
+        "diameter_label": "Diameter",
+        "bar": "Rebar",
+        "branch": "Bar",
+        "branch_length": "Bar Length",
+        "pieces": "Pieces",
+        "description": "Description",
+
+        "no_data": "No data available.",
+    },
+
+    "zh": {
+        "home_title": "🏗️ 混凝土结构",
+        "foundation": "🧱 基础",
+        "columns": "🏛️ 柱",
+        "beams": "📐 梁",
+        "roofs": "🏠 楼板",
+        "stairs": "🪜 楼梯",
+        "ties": "🔗 系梁",
+        "walls": "🧱 墙",
+        "summary": "📊 项目汇总",
+        "settings": "⚙️ 设置",
+        "help": "ℹ️ 帮助",
+        "home": "🏠 首页",
+        "menu": "☰ 菜单",
+        "back": "🔙 返回",
+        "cancel": "❌ 取消",
+        "language": "🌐 语言",
+        "language_changed": "语言修改成功。",
+        "choose_language": "请选择语言：",
+        "start": "你好 👋\n欢迎使用混凝土结构工程量估算机器人。",
+        "cancelled": "操作已取消。",
+        "invalid_number": "❌ 输入值无效，请输入数字。",
+        "positive_number": "❌ 数值必须大于零。",
+        "zero_allowed": "输入 0 可取消此部分。",
+        "done": "✅ 计算完成。",
+        "no_summary": "项目中还没有计算记录。",
+        "project_summary": "📊 项目汇总",
+        "rebar": "🔩 钢筋明细",
+        "cutlist": "✂️ 下料清单",
+        "new_calc": "🔄 新计算",
+        "save_result": "结果已保存到项目汇总。",
+        "help_text": (
+            "ℹ️ 帮助\n\n"
+            "本机器人用于混凝土结构工程量估算。\n\n"
+            "根据输入数据计算混凝土、钢筋、构件长度和下料清单。\n\n"
+            "⚠️ 本工具用于工程量估算，不能替代结构设计、施工图纸 "
+            "和工程师审核。"
+        ),
+
+        "isolated": "独立基础",
+        "strip": "条形基础",
+        "raft": "筏板基础",
+
+        "rect_column": "矩形柱",
+        "round_column": "圆柱",
+
+        "main_beam": "主梁",
+        "secondary_beam": "次梁",
+
+        "tie_beam": "系梁",
+        "tie_collar": "拉梁",
+
+        "shear_wall": "剪力墙",
+        "retaining_wall": "挡土墙",
+
+        "stair_slab": "楼梯",
+
+        "roof_joist_foam": "泡沫块楼板",
+        "roof_joist_clay": "陶土块楼板",
+        "roof_double_joist": "双梁",
+        "roof_keromet": "Kromit楼板",
+        "roof_composite": "组合楼板",
+        "roof_deck": "钢承板楼板",
+        "roof_slab": "混凝土板",
+        "roof_waffle": "密肋/华夫板",
+
+        "count": "数量",
+        "length": "长度",
+        "width": "宽度",
+        "height": "高度",
+        "thickness": "厚度",
+        "diameter": "直径",
+        "spacing": "间距",
+        "cover": "保护层",
+        "lap": "搭接",
+        "lean_length": "素混凝土长度",
+        "lean_width": "素混凝土宽度",
+        "lean_thickness": "素混凝土厚度",
+        "pedestal_length": "柱墩长度",
+        "pedestal_width": "柱墩宽度",
+        "pedestal_height": "柱墩高度",
+
+        "bottom_diameter": "底部钢筋直径",
+        "bottom_spacing": "底部钢筋间距",
+        "top_diameter": "顶部钢筋直径",
+        "top_spacing": "顶部钢筋间距",
+
+        "longitudinal_diameter": "纵向钢筋直径",
+        "longitudinal_count": "纵向钢筋数量",
+        "transverse_diameter": "横向钢筋直径",
+        "transverse_spacing": "横向钢筋间距",
+
+        "top_longitudinal_diameter": "顶部纵向钢筋直径",
+        "top_longitudinal_count": "顶部纵向钢筋数量",
+        "top_transverse_diameter": "顶部横向钢筋直径",
+        "top_transverse_spacing": "顶部横向钢筋间距",
+
+        "bottom_x_diameter": "底部 X 钢筋直径",
+        "bottom_x_spacing": "底部 X 钢筋间距",
+        "bottom_y_diameter": "底部 Y 钢筋直径",
+        "bottom_y_spacing": "底部 Y 钢筋间距",
+        "top_x_diameter": "顶部 X 钢筋直径",
+        "top_x_spacing": "顶部 X 钢筋间距",
+        "top_y_diameter": "顶部 Y 钢筋直径",
+        "top_y_spacing": "顶部 Y 钢筋间距",
+
+        "main_diameter": "主筋直径",
+        "main_count": "主筋数量",
+        "main_top_count": "顶部钢筋数量",
+        "main_bottom_count": "底部钢筋数量",
+        "stirrup_diameter": "箍筋直径",
+        "stirrup_spacing": "箍筋间距",
+
+        "vertical_diameter": "竖向钢筋直径",
+        "vertical_spacing": "竖向钢筋间距",
+        "horizontal_diameter": "水平钢筋直径",
+        "horizontal_spacing": "水平钢筋间距",
+
+        "area": "楼板面积",
+        "rebar_kg_m2": "每平方米钢筋",
+        "steps": "台阶数量",
+        "riser": "踏步高度",
+        "tread": "踏步宽度",
+
+        "ask_count": "请输入数量：",
+        "ask_length": "请输入长度（米）：",
+        "ask_width": "请输入宽度（米）：",
+        "ask_height": "请输入高度（米）：",
+        "ask_thickness": "请输入厚度（米）：",
+        "ask_diameter": "请输入钢筋直径（毫米）：",
+        "ask_spacing": "请输入间距（毫米）：",
+        "ask_cover": "请输入保护层厚度（毫米）：",
+        "ask_lap": "请输入搭接百分比：",
+        "ask_zero": "输入 0 可取消此部分。",
+
+        "result_title": "🏗️ 计算结果",
+        "concrete": "混凝土",
+        "lean_concrete": "素混凝土",
+        "pedestal": "柱墩混凝土",
+        "total_concrete": "混凝土总量",
+        "total_rebar": "钢筋总量",
+
+        "piece": "构件",
+        "piece_count": "数量",
+        "piece_length": "单件长度",
+        "weight": "重量",
+        "bars12": "12米钢筋",
+        "waste": "损耗",
+        "diameter_label": "直径",
+        "bar": "钢筋",
+        "branch": "钢筋",
+        "branch_length": "钢筋长度",
+        "pieces": "切割件",
+        "description": "说明",
+
+        "no_data": "没有可显示的数据。",
+    },
+}
 
 
-def fmt(value, digits=2):
+def get_lang(context):
+    return context.user_data.get("lang", "fa")
+
+
+def tr(context, key):
+    lang = get_lang(context)
+    return T.get(lang, T["fa"]).get(key, T["fa"].get(key, key))
+
+
+# =========================================================
+# NUMBER PARSER
+# =========================================================
+
+def normalize_number(value):
+    if value is None:
+        return None
+
+    s = str(value).strip()
+
+    persian = "۰۱۲۳۴۵۶۷۸۹"
+    arabic = "٠١٢٣٤٥٦٧٨٩"
+
+    for i, ch in enumerate(persian):
+        s = s.replace(ch, str(i))
+
+    for i, ch in enumerate(arabic):
+        s = s.replace(ch, str(i))
+
+    s = s.replace("٫", ".")
+    s = s.replace(",", ".")
+    s = s.replace("٬", "")
+
+    # common unit suffixes
+    lower = s.lower()
+
+    if lower.endswith("cm"):
+        s = s[:-2].strip()
+        try:
+            return float(s) / 100.0
+        except ValueError:
+            return None
+
+    if lower.endswith("mm"):
+        s = s[:-2].strip()
+        try:
+            return float(s) / 1000.0
+        except ValueError:
+            return None
+
     try:
-        value = float(value)
-    except Exception:
-        return "0"
-
-    if abs(value - round(value)) < 1e-9:
-        return str(int(round(value)))
-
-    return f"{value:.{digits}f}".rstrip("0").rstrip(".")
+        return float(s)
+    except ValueError:
+        return None
 
 
-def fmt_kg(value):
-    return f"{fmt(value, 1)} kg"
+def parse_value(text, integer=False):
+    value = normalize_number(text)
+
+    if value is None:
+        return None
+
+    if integer:
+        if abs(value - round(value)) > 1e-9:
+            return None
+        return int(round(value))
+
+    return value
 
 
-def fmt_m3(value):
-    return f"{fmt(value, 2)} m³"
+# =========================================================
+# UI
+# =========================================================
 
-
-def fmt_m(value):
-    return f"{fmt(value, 2)} m"
-
-
-def reset_flow(context: ContextTypes.DEFAULT_TYPE):
-    """
-    فقط اطلاعات مربوط به محاسبه جاری را پاک می‌کند.
-    """
-    keys = [
-        "mode",
-        "title",
-        "fields_list",
-        "fields",
-        "index",
-        "calc",
-        "back_callback",
-        "result",
-        "result_title",
-    ]
-
-    for key in keys:
-        context.user_data.pop(key, None)
-
-
-def bottom_menu():
+def bottom_menu(context):
     return ReplyKeyboardMarkup(
         [
             [
-                KeyboardButton("☰ منو"),
-                KeyboardButton("🏠 خانه"),
+                KeyboardButton(tr(context, "menu")),
+                KeyboardButton(tr(context, "home")),
             ]
         ],
         resize_keyboard=True,
@@ -130,1577 +776,1573 @@ def bottom_menu():
     )
 
 
-# =========================================================
-# منوی اصلی
-# =========================================================
-
-def home_keyboard():
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("🧱 فونداسیون", callback_data="foundation"),
-                InlineKeyboardButton("🏛️ ستون‌ها", callback_data="columns"),
-            ],
-            [
-                InlineKeyboardButton("📐 تیرها", callback_data="beams"),
-                InlineKeyboardButton("🏠 سقف‌ها", callback_data="roofs"),
-            ],
-            [
-                InlineKeyboardButton("🪜 راه‌پله", callback_data="stair"),
-                InlineKeyboardButton("🔗 شناژ و کلاف", callback_data="ties"),
-            ],
-            [
-                InlineKeyboardButton("🧱 دیوارها", callback_data="walls"),
-            ],
-            [
-                InlineKeyboardButton("📊 خلاصه پروژه", callback_data="summary"),
-                InlineKeyboardButton("⚙️ تنظیمات", callback_data="settings"),
-            ],
-            [
-                InlineKeyboardButton("ℹ️ راهنما", callback_data="help"),
-            ],
-        ]
-    )
-
-
-async def send_home(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    reset_flow(context)
-
-    text = (
-        "🏗️ <b>اسکلت بتنی</b>\n\n"
-        "محاسبه تقریبی حجم بتن و وزن میلگرد\n"
-        "بر اساس مشخصات واردشده\n\n"
-        "👇 بخش موردنظر را انتخاب کنید:"
-    )
-
+async def send_message(update, context, text, reply_markup=None):
     if update.callback_query:
-        query = update.callback_query
-        await query.edit_message_text(
-            text=text,
-            reply_markup=home_keyboard(),
-            parse_mode="HTML",
-        )
-        await query.message.reply_text(
-            "☰ منوی سریع",
-            reply_markup=bottom_menu(),
-        )
-    else:
-        await update.message.reply_text(
-            text=text,
-            reply_markup=bottom_menu(),
-            parse_mode="HTML",
-        )
-        await update.message.reply_text(
-            "👇 بخش موردنظر را انتخاب کنید:",
-            reply_markup=home_keyboard(),
-        )
-
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send_home(update, context)
-
-
-# =========================================================
-# منوهای بخش‌ها
-# =========================================================
-
-async def foundation_menu(update: Update, context):
-    keyboard = InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("🧱 پی منفرد", callback_data="foundation_isolated"),
-            ],
-            [
-                InlineKeyboardButton("📏 پی نواری", callback_data="foundation_strip"),
-            ],
-            [
-                InlineKeyboardButton("⬛ پی گسترده (رادیه)", callback_data="foundation_raft"),
-            ],
-            [
-                InlineKeyboardButton("🔙 برگشت", callback_data="home"),
-            ],
-        ]
-    )
-
-    text = "🧱 <b>فونداسیون</b>\n\nنوع فونداسیون را انتخاب کنید:"
-
-    if update.callback_query:
-        await update.callback_query.edit_message_text(
+        return await update.callback_query.message.reply_text(
             text,
-            reply_markup=keyboard,
-            parse_mode="HTML",
-        )
-    else:
-        await update.message.reply_text(
-            text,
-            reply_markup=keyboard,
-            parse_mode="HTML",
+            reply_markup=reply_markup,
         )
 
-
-async def columns_menu(update: Update, context):
-    keyboard = InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton(
-                    "⬛ ستون مربعی / مستطیلی",
-                    callback_data="column_rect",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "⭕ ستون گرد",
-                    callback_data="column_round",
-                )
-            ],
-            [
-                InlineKeyboardButton("🔙 برگشت", callback_data="home"),
-            ],
-        ]
-    )
-
-    text = "🏛️ <b>ستون‌ها</b>\n\nنوع ستون را انتخاب کنید:"
-
-    await update.callback_query.edit_message_text(
+    return await update.message.reply_text(
         text,
-        reply_markup=keyboard,
-        parse_mode="HTML",
+        reply_markup=reply_markup,
     )
 
 
-async def beams_menu(update: Update, context):
-    keyboard = InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("📐 تیر اصلی", callback_data="beam_main"),
-            ],
-            [
-                InlineKeyboardButton("📐 تیر فرعی", callback_data="beam_secondary"),
-            ],
-            [
-                InlineKeyboardButton("🔙 برگشت", callback_data="home"),
-            ],
-        ]
-    )
-
-    await update.callback_query.edit_message_text(
-        "📐 <b>تیرها</b>\n\nنوع تیر را انتخاب کنید:",
-        reply_markup=keyboard,
-        parse_mode="HTML",
-    )
-
-
-async def roofs_menu(update: Update, context):
-    keyboard = InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("🟨 تیرچه یونولیتی", callback_data="roof_یونولیتی"),
-                InlineKeyboardButton("🧱 تیرچه سفالی", callback_data="roof_سفالی"),
-            ],
-            [
-                InlineKeyboardButton("➿ تیرچه دوبل", callback_data="roof_دوبل"),
-                InlineKeyboardButton("🔩 کرومیت", callback_data="roof_کرومیت"),
-            ],
-            [
-                InlineKeyboardButton("🏗️ کامپوزیت", callback_data="roof_کامپوزیت"),
-                InlineKeyboardButton("〰️ عرشه فولادی", callback_data="roof_عرشه"),
-            ],
-            [
-                InlineKeyboardButton("⬛ دال بتنی", callback_data="roof_دال"),
-                InlineKeyboardButton("🔳 وافل", callback_data="roof_وافل"),
-            ],
-            [
-                InlineKeyboardButton("🔙 برگشت", callback_data="home"),
-            ],
-        ]
-    )
-
-    await update.callback_query.edit_message_text(
-        "🏠 <b>سقف‌ها</b>\n\nنوع سقف را انتخاب کنید:",
-        reply_markup=keyboard,
-        parse_mode="HTML",
-    )
-
-
-async def ties_menu(update: Update, context):
-    keyboard = InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("🔗 شناژ", callback_data="tie_beam"),
-                InlineKeyboardButton("🔗 کلاف", callback_data="tie_beam"),
-            ],
-            [
-                InlineKeyboardButton("🔙 برگشت", callback_data="home"),
-            ],
-        ]
-    )
-
-    await update.callback_query.edit_message_text(
-        "🔗 <b>شناژ و کلاف</b>\n\nنوع عضو را انتخاب کنید:",
-        reply_markup=keyboard,
-        parse_mode="HTML",
-    )
-
-
-async def walls_menu(update: Update, context):
-    keyboard = InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("🧱 دیوار برشی", callback_data="wall_shear"),
-            ],
-            [
-                InlineKeyboardButton("🧱 دیوار حائل", callback_data="wall_retaining"),
-            ],
-            [
-                InlineKeyboardButton("🔙 برگشت", callback_data="home"),
-            ],
-        ]
-    )
-
-    await update.callback_query.edit_message_text(
-        "🧱 <b>دیوارها</b>\n\nنوع دیوار را انتخاب کنید:",
-        reply_markup=keyboard,
-        parse_mode="HTML",
-    )
-
-
-# =========================================================
-# فیلدهای ورودی
-# =========================================================
-
-ISOLATED_FIELDS = [
-    ("count", "تعداد پی", "int"),
-    ("length", "طول پی (m)", "float"),
-    ("width", "عرض پی (m)", "float"),
-    ("thickness", "ضخامت پی (m)", "float"),
-
-    ("lean_length", "طول بتن مگر (m)", "float"),
-    ("lean_width", "عرض بتن مگر (m)", "float"),
-    ("lean_thickness", "ضخامت بتن مگر (m)", "float"),
-
-    ("bottom_diameter", "قطر میلگرد پایین (mm)", "int"),
-    ("bottom_spacing", "فاصله میلگرد پایین (mm)", "float"),
-
-    ("top_diameter", "قطر میلگرد بالا (mm) - در صورت نداشتن 0", "int"),
-    ("top_spacing", "فاصله میلگرد بالا (mm) - در صورت نداشتن 0", "float"),
-
-    ("cover", "کاور بتن (mm)", "float"),
-    ("lap", "درصد اورلپ", "float"),
-
-    ("pedestal_length", "طول پدستال (m) - در صورت نداشتن 0", "float"),
-    ("pedestal_width", "عرض پدستال (m) - در صورت نداشتن 0", "float"),
-    ("pedestal_height", "ارتفاع پدستال (m) - در صورت نداشتن 0", "float"),
-]
-
-
-STRIP_FIELDS = [
-    ("count", "تعداد نوار / پی", "int"),
-    ("length", "طول نوار پی (m)", "float"),
-    ("footing_width", "عرض پی نواری (m)", "float"),
-    ("footing_thickness", "ضخامت پی (m)", "float"),
-
-    ("lean_length", "طول بتن مگر (m)", "float"),
-    ("lean_width", "عرض بتن مگر (m)", "float"),
-    ("lean_thickness", "ضخامت بتن مگر (m)", "float"),
-
-    ("longitudinal_diameter", "قطر میلگرد طولی (mm)", "int"),
-    ("longitudinal_count", "تعداد میلگرد طولی", "int"),
-
-    ("transverse_diameter", "قطر میلگرد عرضی (mm)", "int"),
-    ("transverse_spacing", "فاصله میلگرد عرضی (mm)", "float"),
-
-    ("top_longitudinal_diameter", "قطر میلگرد طولی بالا (mm) - بدون آن 0", "int"),
-    ("top_longitudinal_count", "تعداد میلگرد طولی بالا - بدون آن 0", "int"),
-
-    ("top_transverse_diameter", "قطر میلگرد عرضی بالا (mm) - بدون آن 0", "int"),
-    ("top_transverse_spacing", "فاصله میلگرد عرضی بالا (mm) - بدون آن 0", "float"),
-
-    ("cover", "کاور بتن (mm)", "float"),
-    ("lap", "درصد اورلپ", "float"),
-]
-
-
-RAFT_FIELDS = [
-    ("length", "طول رادیه (m)", "float"),
-    ("width", "عرض رادیه (m)", "float"),
-    ("thickness", "ضخامت رادیه (m)", "float"),
-
-    ("lean_length", "طول بتن مگر (m)", "float"),
-    ("lean_width", "عرض بتن مگر (m)", "float"),
-    ("lean_thickness", "ضخامت بتن مگر (m)", "float"),
-
-    ("bottom_x_diameter", "قطر میلگرد پایین X (mm)", "int"),
-    ("bottom_x_spacing", "فاصله میلگرد پایین X (mm)", "float"),
-
-    ("bottom_y_diameter", "قطر میلگرد پایین Y (mm)", "int"),
-    ("bottom_y_spacing", "فاصله میلگرد پایین Y (mm)", "float"),
-
-    ("top_x_diameter", "قطر میلگرد بالا X (mm) - بدون آن 0", "int"),
-    ("top_x_spacing", "فاصله میلگرد بالا X (mm) - بدون آن 0", "float"),
-
-    ("top_y_diameter", "قطر میلگرد بالا Y (mm) - بدون آن 0", "int"),
-    ("top_y_spacing", "فاصله میلگرد بالا Y (mm) - بدون آن 0", "float"),
-
-    ("cover", "کاور بتن (mm)", "float"),
-    ("lap", "درصد اورلپ", "float"),
-]
-
-
-COLUMN_RECT_FIELDS = [
-    ("count", "تعداد ستون", "int"),
-    ("width", "عرض ستون (m)", "float"),
-    ("depth", "عمق ستون (m)", "float"),
-    ("height", "ارتفاع ستون (m)", "float"),
-    ("main_diameter", "قطر میلگرد طولی (mm)", "int"),
-    ("main_count", "تعداد میلگرد طولی", "int"),
-    ("stirrup_diameter", "قطر خاموت (mm)", "int"),
-    ("stirrup_spacing", "فاصله خاموت (mm)", "float"),
-    ("cover", "کاور بتن (mm)", "float"),
-]
-
-
-COLUMN_ROUND_FIELDS = [
-    ("count", "تعداد ستون", "int"),
-    ("diameter", "قطر ستون (m)", "float"),
-    ("height", "ارتفاع ستون (m)", "float"),
-    ("main_diameter", "قطر میلگرد طولی (mm)", "int"),
-    ("main_count", "تعداد میلگرد طولی", "int"),
-    ("stirrup_diameter", "قطر خاموت (mm)", "int"),
-    ("stirrup_spacing", "فاصله خاموت (mm)", "float"),
-    ("cover", "کاور بتن (mm)", "float"),
-]
-
-
-BEAM_FIELDS = [
-    ("count", "تعداد تیر", "int"),
-    ("length", "طول تیر (m)", "float"),
-    ("width", "عرض تیر (m)", "float"),
-    ("height", "ارتفاع تیر (m)", "float"),
-    ("main_diameter", "قطر میلگرد اصلی (mm)", "int"),
-    ("bottom_count", "تعداد میلگرد پایین", "int"),
-    ("top_count", "تعداد میلگرد بالا", "int"),
-    ("stirrup_diameter", "قطر خاموت (mm)", "int"),
-    ("stirrup_spacing", "فاصله خاموت (mm)", "float"),
-    ("cover", "کاور بتن (mm)", "float"),
-]
-
-
-TIE_FIELDS = [
-    ("count", "تعداد شناژ / کلاف", "int"),
-    ("length", "طول (m)", "float"),
-    ("width", "عرض (m)", "float"),
-    ("height", "ارتفاع (m)", "float"),
-    ("main_diameter", "قطر میلگرد طولی (mm)", "int"),
-    ("main_count", "تعداد میلگرد طولی", "int"),
-    ("stirrup_diameter", "قطر خاموت (mm)", "int"),
-    ("stirrup_spacing", "فاصله خاموت (mm)", "float"),
-    ("cover", "کاور بتن (mm)", "float"),
-]
-
-
-WALL_FIELDS = [
-    ("count", "تعداد دیوار", "int"),
-    ("length", "طول دیوار (m)", "float"),
-    ("height", "ارتفاع دیوار (m)", "float"),
-    ("thickness", "ضخامت دیوار (m)", "float"),
-    ("main_diameter", "قطر میلگرد اصلی (mm)", "int"),
-    ("main_spacing", "فاصله میلگرد اصلی (mm)", "float"),
-    ("secondary_diameter", "قطر میلگرد توزیعی (mm)", "int"),
-    ("secondary_spacing", "فاصله میلگرد توزیعی (mm)", "float"),
-    ("cover", "کاور بتن (mm)", "float"),
-]
-
-
-STAIR_FIELDS = [
-    ("count", "تعداد راه‌پله", "int"),
-    ("width", "عرض راه‌پله (m)", "float"),
-    ("length", "طول شیب / رمپ (m)", "float"),
-    ("thickness", "ضخامت دال (m)", "float"),
-    ("main_diameter", "قطر میلگرد اصلی (mm)", "int"),
-    ("main_spacing", "فاصله میلگرد اصلی (mm)", "float"),
-    ("secondary_diameter", "قطر میلگرد توزیعی (mm)", "int"),
-    ("secondary_spacing", "فاصله میلگرد توزیعی (mm)", "float"),
-    ("cover", "کاور بتن (mm)", "float"),
-]
-
-
-ROOF_FIELDS = [
-    ("area", "مساحت سقف (m²)", "float"),
-    ("rebar_kg_m2", "وزن میلگرد تقریبی به ازای هر m² (kg/m²)", "float"),
-]
-
-
-# =========================================================
-# Wizard
-# =========================================================
-
-async def start_wizard(
-    update,
-    context,
-    title,
-    fields_list,
-    calc,
-    back_callback,
-):
-    reset_flow(context)
-
-    context.user_data["mode"] = "wizard"
-    context.user_data["title"] = title
-    context.user_data["fields_list"] = fields_list
-    context.user_data["fields"] = {}
-    context.user_data["index"] = 0
-    context.user_data["calc"] = calc
-    context.user_data["back_callback"] = back_callback
-
-    await ask_current_field(update, context)
-
-
-async def ask_current_field(update, context):
-    index = context.user_data["index"]
-    fields_list = context.user_data["fields_list"]
-
-    if index >= len(fields_list):
-        await calculate_wizard(update, context)
-        return
-
-    key, label, field_type = fields_list[index]
-
-    text = (
-        f"🏗️ <b>{context.user_data['title']}</b>\n\n"
-        f"مرحله {index + 1} از {len(fields_list)}\n\n"
-        f"✏️ <b>{label}</b>\n\n"
-        f"مقدار را وارد کنید:"
-    )
-
-    keyboard = InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton(
-                    "🔙 برگشت",
-                    callback_data="wizard_back",
-                ),
-                InlineKeyboardButton(
-                    "❌ لغو",
-                    callback_data="home",
-                ),
-            ]
-        ]
-    )
-
-    if update.callback_query:
-        await update.callback_query.edit_message_text(
-            text,
-            reply_markup=keyboard,
-            parse_mode="HTML",
-        )
-    else:
-        await update.message.reply_text(
-            text,
-            reply_markup=keyboard,
-            parse_mode="HTML",
-        )
-
-
-async def calculate_wizard(update, context):
-    try:
-        result = context.user_data["calc"](context.user_data["fields"])
-        context.user_data["result"] = result
-
-        await show_generic_result(update, context)
-
-    except Exception as e:
-        logger.exception("Calculation error")
-
-        text = (
-            "❌ <b>خطا در محاسبه</b>\n\n"
-            "اطلاعات واردشده با محاسبات سازگار نیست.\n\n"
-            f"<code>{str(e)}</code>"
-        )
-
-        if update.callback_query:
-            await update.callback_query.edit_message_text(
-                text,
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup(
-                    [
-                        [
-                            InlineKeyboardButton(
-                                "🔙 برگشت",
-                                callback_data=context.user_data.get(
-                                    "back_callback",
-                                    "home",
-                                ),
-                            )
-                        ]
-                    ]
-                ),
-            )
-        else:
-            await update.message.reply_text(text, parse_mode="HTML")
-
-
-async def wizard_back(update, context):
+async def edit_message(update, text, reply_markup=None):
     query = update.callback_query
 
-    index = context.user_data.get("index", 0)
+    try:
+        await query.edit_message_text(
+            text,
+            reply_markup=reply_markup,
+        )
+    except Exception:
+        await query.message.reply_text(
+            text,
+            reply_markup=reply_markup,
+        )
 
-    if index <= 0:
-        callback = context.user_data.get("back_callback", "home")
-        await route_callback(query, context, callback)
-        return
 
-    index -= 1
-    context.user_data["index"] = index
-
-    key, _, _ = context.user_data["fields_list"][index]
-    context.user_data["fields"].pop(key, None)
-
-    await ask_current_field(update, context)
+def button(text, callback):
+    return InlineKeyboardButton(text, callback_data=callback)
 
 
 # =========================================================
-# شروع محاسبات
+# HOME
 # =========================================================
 
-async def start_isolated(update, context):
-    await start_wizard(
-        update,
-        context,
-        "پی منفرد",
-        ISOLATED_FIELDS,
-        calc_isolated,
-        "foundation",
-    )
-
-
-async def start_strip(update, context):
-    await start_wizard(
-        update,
-        context,
-        "پی نواری",
-        STRIP_FIELDS,
-        calc_strip,
-        "foundation",
-    )
-
-
-async def start_raft(update, context):
-    await start_wizard(
-        update,
-        context,
-        "پی گسترده (رادیه)",
-        RAFT_FIELDS,
-        calc_raft,
-        "foundation",
-    )
-
-
-async def start_column_rect(update, context):
-    await start_wizard(
-        update,
-        context,
-        "ستون مستطیلی",
-        COLUMN_RECT_FIELDS,
-        calc_column_rect,
-        "columns",
-    )
-
-
-async def start_column_round(update, context):
-    await start_wizard(
-        update,
-        context,
-        "ستون گرد",
-        COLUMN_ROUND_FIELDS,
-        calc_column_round,
-        "columns",
-    )
-
-
-async def start_beam(update, context, secondary=False):
-    await start_wizard(
-        update,
-        context,
-        "تیر فرعی" if secondary else "تیر اصلی",
-        BEAM_FIELDS,
-        calc_beam,
-        "beams",
-    )
-
-
-async def start_tie(update, context):
-    await start_wizard(
-        update,
-        context,
-        "شناژ / کلاف",
-        TIE_FIELDS,
-        calc_tie,
-        "ties",
-    )
-
-
-async def start_wall(update, context, wall_type="دیوار"):
-    await start_wizard(
-        update,
-        context,
-        wall_type,
-        WALL_FIELDS,
-        calc_wall,
-        "walls",
-    )
-
-
-async def start_stair(update, context):
-    await start_wizard(
-        update,
-        context,
-        "راه‌پله",
-        STAIR_FIELDS,
-        calc_stair,
-        "home",
-    )
-
-
-async def start_roof(update, context, roof_type):
-    async def roof_calc(fields):
-        return roof_slab(
-            roof_type=roof_type,
-            area_m2=float(fields["area"]),
-            rebar_kg_per_m2=float(fields["rebar_kg_m2"]),
-        )
-
-    await start_wizard(
-        update,
-        context,
-        f"سقف {roof_type}",
-        ROOF_FIELDS,
-        roof_calc,
-        "roofs",
-    )
-
-
-# =========================================================
-# توابع محاسبات
-# =========================================================
-
-def calc_isolated(f):
-    top_diameter = int(f["top_diameter"])
-    top_spacing = float(f["top_spacing"])
-
-    if top_diameter <= 0 or top_spacing <= 0:
-        top_diameter = None
-        top_spacing = None
-
-    return isolated_footing(
-        count=int(f["count"]),
-        length_m=float(f["length"]),
-        width_m=float(f["width"]),
-        thickness_m=float(f["thickness"]),
-        lean_concrete_length_m=float(f["lean_length"]),
-        lean_concrete_width_m=float(f["lean_width"]),
-        lean_concrete_thickness_m=float(f["lean_thickness"]),
-        bottom_diameter_mm=int(f["bottom_diameter"]),
-        bottom_spacing_mm=float(f["bottom_spacing"]),
-        top_diameter_mm=top_diameter,
-        top_spacing_mm=top_spacing,
-        cover_mm=float(f["cover"]),
-        lap_percent=float(f["lap"]),
-        pedestal_length_m=float(f["pedestal_length"]),
-        pedestal_width_m=float(f["pedestal_width"]),
-        pedestal_height_m=float(f["pedestal_height"]),
-    )
-
-
-def calc_strip(f):
-    top_long_diameter = int(f["top_longitudinal_diameter"])
-    top_long_count = int(f["top_longitudinal_count"])
-    top_trans_diameter = int(f["top_transverse_diameter"])
-    top_trans_spacing = float(f["top_transverse_spacing"])
-
-    if top_long_diameter <= 0 or top_long_count <= 0:
-        top_long_diameter = None
-        top_long_count = None
-
-    if top_trans_diameter <= 0 or top_trans_spacing <= 0:
-        top_trans_diameter = None
-        top_trans_spacing = None
-
-    return strip_footing(
-        count=int(f["count"]),
-        length_m=float(f["length"]),
-        width_m=float(f["footing_width"]),
-        thickness_m=float(f["footing_thickness"]),
-        lean_concrete_length_m=float(f["lean_length"]),
-        lean_concrete_width_m=float(f["lean_width"]),
-        lean_concrete_thickness_m=float(f["lean_thickness"]),
-        longitudinal_diameter_mm=int(f["longitudinal_diameter"]),
-        longitudinal_count=int(f["longitudinal_count"]),
-        transverse_diameter_mm=int(f["transverse_diameter"]),
-        transverse_spacing_mm=float(f["transverse_spacing"]),
-        top_longitudinal_diameter_mm=top_long_diameter,
-        top_longitudinal_count=top_long_count,
-        top_transverse_diameter_mm=top_trans_diameter,
-        top_transverse_spacing_mm=top_trans_spacing,
-        cover_mm=float(f["cover"]),
-        lap_percent=float(f["lap"]),
-    )
-
-
-def calc_raft(f):
-    top_x_diameter = int(f["top_x_diameter"])
-    top_x_spacing = float(f["top_x_spacing"])
-    top_y_diameter = int(f["top_y_diameter"])
-    top_y_spacing = float(f["top_y_spacing"])
-
-    if top_x_diameter <= 0 or top_x_spacing <= 0:
-        top_x_diameter = None
-        top_x_spacing = None
-
-    if top_y_diameter <= 0 or top_y_spacing <= 0:
-        top_y_diameter = None
-        top_y_spacing = None
-
-    return raft_foundation(
-        length_m=float(f["length"]),
-        width_m=float(f["width"]),
-        thickness_m=float(f["thickness"]),
-        lean_concrete_length_m=float(f["lean_length"]),
-        lean_concrete_width_m=float(f["lean_width"]),
-        lean_concrete_thickness_m=float(f["lean_thickness"]),
-        bottom_x_diameter_mm=int(f["bottom_x_diameter"]),
-        bottom_x_spacing_mm=float(f["bottom_x_spacing"]),
-        bottom_y_diameter_mm=int(f["bottom_y_diameter"]),
-        bottom_y_spacing_mm=float(f["bottom_y_spacing"]),
-        top_x_diameter_mm=top_x_diameter,
-        top_x_spacing_mm=top_x_spacing,
-        top_y_diameter_mm=top_y_diameter,
-        top_y_spacing_mm=top_y_spacing,
-        cover_mm=float(f["cover"]),
-        lap_percent=float(f["lap"]),
-    )
-
-
-def calc_column_rect(f):
-    return column_rectangular(
-        count=int(f["count"]),
-        width_m=float(f["width"]),
-        depth_m=float(f["depth"]),
-        height_m=float(f["height"]),
-        main_diameter_mm=int(f["main_diameter"]),
-        main_count=int(f["main_count"]),
-        stirrup_diameter_mm=int(f["stirrup_diameter"]),
-        stirrup_spacing_mm=float(f["stirrup_spacing"]),
-        cover_mm=float(f["cover"]),
-    )
-
-
-def calc_column_round(f):
-    return column_round(
-        count=int(f["count"]),
-        diameter_m=float(f["diameter"]),
-        height_m=float(f["height"]),
-        main_diameter_mm=int(f["main_diameter"]),
-        main_count=int(f["main_count"]),
-        stirrup_diameter_mm=int(f["stirrup_diameter"]),
-        stirrup_spacing_mm=float(f["stirrup_spacing"]),
-        cover_mm=float(f["cover"]),
-    )
-
-
-def calc_beam(f):
-    return beam(
-        count=int(f["count"]),
-        length_m=float(f["length"]),
-        width_m=float(f["width"]),
-        height_m=float(f["height"]),
-        main_diameter_mm=int(f["main_diameter"]),
-        main_top_count=int(f["top_count"]),
-        main_bottom_count=int(f["bottom_count"]),
-        stirrup_diameter_mm=int(f["stirrup_diameter"]),
-        stirrup_spacing_mm=float(f["stirrup_spacing"]),
-        cover_mm=float(f["cover"]),
-    )
-
-
-def calc_tie(f):
-    return tie_beam(
-        count=int(f["count"]),
-        length_m=float(f["length"]),
-        width_m=float(f["width"]),
-        height_m=float(f["height"]),
-        main_diameter_mm=int(f["main_diameter"]),
-        main_count=int(f["main_count"]),
-        stirrup_diameter_mm=int(f["stirrup_diameter"]),
-        stirrup_spacing_mm=float(f["stirrup_spacing"]),
-        cover_mm=float(f["cover"]),
-    )
-
-
-def calc_wall(f):
-    return wall_concrete(
-        count=int(f["count"]),
-        length_m=float(f["length"]),
-        height_m=float(f["height"]),
-        thickness_m=float(f["thickness"]),
-        main_diameter_mm=int(f["main_diameter"]),
-        main_spacing_mm=float(f["main_spacing"]),
-        secondary_diameter_mm=int(f["secondary_diameter"]),
-        secondary_spacing_mm=float(f["secondary_spacing"]),
-        cover_mm=float(f["cover"]),
-    )
-
-
-def calc_stair(f):
-    return stair_slab(
-        count=int(f["count"]),
-        width_m=float(f["width"]),
-        length_m=float(f["length"]),
-        thickness_m=float(f["thickness"]),
-        main_diameter_mm=int(f["main_diameter"]),
-        main_spacing_mm=float(f["main_spacing"]),
-        secondary_diameter_mm=int(f["secondary_diameter"]),
-        secondary_spacing_mm=float(f["secondary_spacing"]),
-        cover_mm=float(f["cover"]),
-    )
-
-
-# =========================================================
-# استخراج خروجی محاسبات
-# =========================================================
-
-def get_concrete_total(result):
-    if not isinstance(result, dict):
-        return 0
-
-    if result.get("total_concrete") is not None:
-        return result.get("total_concrete", 0)
-
-    if result.get("concrete") is not None:
-        return result.get("concrete", 0)
-
-    total = 0
-
-    for key in [
-        "lean_concrete",
-        "footing_concrete",
-        "pedestal_concrete",
-        "raft_concrete",
-        "structural_concrete",
-    ]:
-        total += float(result.get(key, 0) or 0)
-
-    return total
-
-
-def get_rebar_total(result):
-    if not isinstance(result, dict):
-        return 0
-
-    rebar = result.get("rebar")
-
-    if isinstance(rebar, dict):
-        return float(rebar.get("total_weight", 0) or 0)
-
-    return float(result.get("rebar_weight", 0) or 0)
-
-
-def get_rebar_details(result):
-    if not isinstance(result, dict):
-        return []
-
-    rebar = result.get("rebar")
-
-    if isinstance(rebar, dict):
-        details = rebar.get("details", [])
-        return details if isinstance(details, list) else []
-
-    return []
-
-
-def detail_value(item, *keys, default=0):
-    for key in keys:
-        if key in item and item[key] is not None:
-            return item[key]
-    return default
-
-
-# =========================================================
-# خروجی ستونی
-# =========================================================
-
-def make_summary_block(result):
-    title = context_title_placeholder = ""
-
-    result_type = result.get("type", "")
-
-    lines = []
-
-    if result_type == "isolated_footing":
-        lines.append("🏗️ مشخصات پی منفرد")
-        lines.append("")
-
-        lines.append(f"تعداد پی:       {result.get('count', 0)} عدد")
-        lines.append(
-            f"بتن پی:         {fmt_m3(result.get('footing_concrete', 0))}"
-        )
-        lines.append(
-            f"بتن پدستال:     {fmt_m3(result.get('pedestal_concrete', 0))}"
-        )
-        lines.append(
-            f"بتن مگر:        {fmt_m3(result.get('lean_concrete', 0))}"
-        )
-
-    elif result_type == "strip_footing":
-        lines.append("📏 مشخصات پی نواری")
-        lines.append("")
-
-        lines.append(
-            f"تعداد:          {result.get('count', 0)}"
-        )
-        lines.append(
-            f"بتن پی:         {fmt_m3(result.get('footing_concrete', 0))}"
-        )
-        lines.append(
-            f"بتن مگر:        {fmt_m3(result.get('lean_concrete', 0))}"
-        )
-
-    elif result_type == "raft_foundation":
-        lines.append("⬛ مشخصات رادیه")
-        lines.append("")
-
-        lines.append(
-            f"بتن رادیه:      {fmt_m3(result.get('raft_concrete', 0))}"
-        )
-        lines.append(
-            f"بتن مگر:        {fmt_m3(result.get('lean_concrete', 0))}"
-        )
-
-    elif result_type == "column":
-        lines.append("🏛️ مشخصات ستون")
-        lines.append("")
-        lines.append(
-            f"تعداد ستون:     {result.get('count', 0)} عدد"
-        )
-        lines.append(
-            f"بتن:            {fmt_m3(result.get('concrete', 0))}"
-        )
-
-    elif result_type == "beam":
-        lines.append("📐 مشخصات تیر")
-        lines.append("")
-        lines.append(
-            f"تعداد تیر:      {result.get('count', 0)} عدد"
-        )
-        lines.append(
-            f"بتن:            {fmt_m3(result.get('concrete', 0))}"
-        )
-
-    elif result_type == "wall":
-        lines.append("🧱 مشخصات دیوار")
-        lines.append("")
-        lines.append(
-            f"تعداد دیوار:    {result.get('count', 0)} عدد"
-        )
-        lines.append(
-            f"بتن:            {fmt_m3(result.get('concrete', 0))}"
-        )
-
-    elif result_type == "stair":
-        lines.append("🪜 مشخصات راه‌پله")
-        lines.append("")
-        lines.append(
-            f"تعداد:          {result.get('count', 0)} عدد"
-        )
-        lines.append(
-            f"بتن:            {fmt_m3(result.get('concrete', 0))}"
-        )
-
-    elif result_type == "roof":
-        lines.append("🏠 مشخصات سقف")
-        lines.append("")
-        lines.append(
-            f"نوع سقف:        {result.get('roof_type', '-')}"
-        )
-        lines.append(
-            f"مساحت:          {fmt(result.get('area', 0), 2)} m²"
-        )
-        lines.append(
-            f"بتن:            {fmt_m3(result.get('concrete', 0))}"
-        )
-
-    elif result_type == "tie_beam":
-        lines.append("🔗 مشخصات شناژ / کلاف")
-        lines.append("")
-        lines.append(
-            f"تعداد:          {result.get('count', 0)} عدد"
-        )
-        lines.append(
-            f"بتن:            {fmt_m3(result.get('concrete', 0))}"
-        )
-
-    else:
-        lines.append("📊 نتیجه محاسبه")
-        lines.append("")
-
-        concrete = result.get("concrete", result.get("total_concrete", 0))
-        lines.append(f"بتن:            {fmt_m3(concrete)}")
-
-    concrete_total = get_concrete_total(result)
-    rebar_total = get_rebar_total(result)
-
-    lines.append("")
-    lines.append("━━━━━━━━━━━━━━━━")
-    lines.append(f"کل بتن:         {fmt_m3(concrete_total)}")
-    lines.append(f"کل میلگرد:      {fmt_kg(rebar_total)}")
-    lines.append("━━━━━━━━━━━━━━━━")
-
-    return "\n".join(lines)
-
-
-def make_rebar_block(result):
-    details = get_rebar_details(result)
-    total = get_rebar_total(result)
-
-    lines = [
-        "🔩 جزئیات میلگرد",
-        "",
-        "━━━━━━━━━━━━━━━━",
-    ]
-
-    if not details:
-        lines.append("جزئیات میلگرد در این محاسبه موجود نیست.")
-        lines.append("━━━━━━━━━━━━━━━━")
-        lines.append(f"جمع میلگرد:     {fmt_kg(total)}")
-        return "\n".join(lines)
-
-    for i, item in enumerate(details, start=1):
-        diameter = detail_value(
-            item,
-            "diameter",
-            "diameter_mm",
-        )
-
-        pieces = detail_value(
-            item,
-            "pieces",
-            "count",
-        )
-
-        piece_length = detail_value(
-            item,
-            "piece_length",
-            "piece_length_m",
-        )
-
-        weight = detail_value(
-            item,
-            "weight",
-            "weight_kg",
-        )
-
-        lines.extend(
-            [
-                f"میلگرد {i}",
-                f"قطر:            Φ{fmt(diameter)}",
-                f"تعداد:          {fmt(pieces)} عدد",
-                f"طول هر قطعه:    {fmt_m(piece_length)}",
-                f"وزن:            {fmt_kg(weight)}",
-                "",
-            ]
-        )
-
-    lines.append("━━━━━━━━━━━━━━━━")
-    lines.append(f"جمع میلگرد:     {fmt_kg(total)}")
-
-    return "\n".join(lines)
-
-
-def make_cutlist_block(result):
-    details = get_rebar_details(result)
-
-    lines = [
-        "✂️ Cut List",
-        "",
-        "━━━━━━━━━━━━━━━━",
-    ]
-
-    if not details:
-        lines.append("لیست برش برای این محاسبه موجود نیست.")
-        lines.append("")
-        lines.append(
-            "برای این بخش فعلاً فقط جزئیات میلگرد ثبت شده است."
-        )
-        lines.append("━━━━━━━━━━━━━━━━")
-        return "\n".join(lines)
-
-    for i, item in enumerate(details, start=1):
-        diameter = detail_value(
-            item,
-            "diameter",
-            "diameter_mm",
-        )
-
-        pieces = detail_value(
-            item,
-            "pieces",
-            "count",
-        )
-
-        piece_length = detail_value(
-            item,
-            "piece_length",
-            "piece_length_m",
-        )
-
-        bars_12m = detail_value(
-            item,
-            "bars_12m",
-        )
-
-        lines.extend(
-            [
-                f"قطعه {i}",
-                f"قطر:            Φ{fmt(diameter)}",
-                f"طول:            {fmt_m(piece_length)}",
-                f"تعداد:          {fmt(pieces)} عدد",
-                f"شاخه ۱۲ متری:   {fmt(bars_12m)} شاخه",
-                "",
-            ]
-        )
-
-    lines.append("━━━━━━━━━━━━━━━━")
-
-    return "\n".join(lines)
-
-
-# =========================================================
-# نتیجه
-# =========================================================
-
-def result_keyboard():
+def home_keyboard(context):
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton(
-                    "🔩 جزئیات میلگرد",
-                    callback_data="result_rebar",
-                ),
-                InlineKeyboardButton(
-                    "✂️ Cut List",
-                    callback_data="result_cutlist",
-                ),
+                button(tr(context, "foundation"), "menu_foundation"),
+                button(tr(context, "columns"), "menu_columns"),
             ],
             [
-                InlineKeyboardButton(
-                    "🔄 محاسبه جدید",
-                    callback_data="result_new",
-                ),
-                InlineKeyboardButton(
-                    "🔙 برگشت",
-                    callback_data="result_back",
-                ),
+                button(tr(context, "beams"), "menu_beams"),
+                button(tr(context, "roofs"), "menu_roofs"),
             ],
             [
-                InlineKeyboardButton(
-                    "🏠 منوی اصلی",
-                    callback_data="home",
-                )
+                button(tr(context, "stairs"), "menu_stairs"),
+                button(tr(context, "ties"), "menu_ties"),
+            ],
+            [
+                button(tr(context, "walls"), "menu_walls"),
+            ],
+            [
+                button(tr(context, "summary"), "summary"),
+            ],
+            [
+                button(tr(context, "settings"), "settings"),
+                button(tr(context, "help"), "help"),
             ],
         ]
     )
 
 
-async def show_generic_result(update, context):
-    result = context.user_data.get("result")
+async def show_home(update, context):
+    context.user_data.pop("wizard", None)
 
-    if not result:
-        await send_home(update, context)
-        return
-
-    text = make_summary_block(result)
+    text = tr(context, "home_title")
 
     if update.callback_query:
-        await update.callback_query.edit_message_text(
-            f"<pre>{text}</pre>",
-            reply_markup=result_keyboard(),
-            parse_mode="HTML",
+        await edit_message(
+            update,
+            text,
+            home_keyboard(context),
         )
     else:
         await update.message.reply_text(
-            f"<pre>{text}</pre>",
-            reply_markup=result_keyboard(),
-            parse_mode="HTML",
+            text,
+            reply_markup=home_keyboard(context),
+        )
+
+        await update.message.reply_text(
+            tr(context, "menu"),
+            reply_markup=bottom_menu(context),
         )
 
 
-async def show_rebar_result(update, context):
-    result = context.user_data.get("result")
+# =========================================================
+# MENUS
+# =========================================================
 
-    if not result:
-        await send_home(update, context)
-        return
-
-    text = make_rebar_block(result)
-
+async def show_foundation_menu(update, context):
     keyboard = InlineKeyboardMarkup(
         [
-            [
-                InlineKeyboardButton(
-                    "✂️ Cut List",
-                    callback_data="result_cutlist",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🔙 نتیجه اصلی",
-                    callback_data="result_main",
-                )
-            ],
+            [button(tr(context, "isolated"), "foundation_isolated")],
+            [button(tr(context, "strip"), "foundation_strip")],
+            [button(tr(context, "raft"), "foundation_raft")],
+            [button(tr(context, "back"), "home")],
         ]
     )
 
-    await update.callback_query.edit_message_text(
-        f"<pre>{text}</pre>",
-        reply_markup=keyboard,
-        parse_mode="HTML",
-    )
+    await edit_message(update, tr(context, "foundation"), keyboard)
 
 
-async def show_cutlist_result(update, context):
-    result = context.user_data.get("result")
-
-    if not result:
-        await send_home(update, context)
-        return
-
-    text = make_cutlist_block(result)
-
+async def show_columns_menu(update, context):
     keyboard = InlineKeyboardMarkup(
         [
-            [
-                InlineKeyboardButton(
-                    "🔩 جزئیات میلگرد",
-                    callback_data="result_rebar",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🔙 نتیجه اصلی",
-                    callback_data="result_main",
-                )
-            ],
+            [button(tr(context, "rect_column"), "column_rect")],
+            [button(tr(context, "round_column"), "column_round")],
+            [button(tr(context, "back"), "home")],
         ]
     )
 
-    await update.callback_query.edit_message_text(
-        f"<pre>{text}</pre>",
-        reply_markup=keyboard,
-        parse_mode="HTML",
+    await edit_message(update, tr(context, "columns"), keyboard)
+
+
+async def show_beams_menu(update, context):
+    keyboard = InlineKeyboardMarkup(
+        [
+            [button(tr(context, "main_beam"), "beam_main")],
+            [button(tr(context, "secondary_beam"), "beam_secondary")],
+            [button(tr(context, "back"), "home")],
+        ]
     )
 
+    await edit_message(update, tr(context, "beams"), keyboard)
+
+
+async def show_roofs_menu(update, context):
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                button(
+                    tr(context, "roof_joist_foam"),
+                    "roof_joist_foam",
+                )
+            ],
+            [
+                button(
+                    tr(context, "roof_joist_clay"),
+                    "roof_joist_clay",
+                )
+            ],
+            [
+                button(
+                    tr(context, "roof_double_joist"),
+                    "roof_double_joist",
+                )
+            ],
+            [
+                button(
+                    tr(context, "roof_keromet"),
+                    "roof_keromet",
+                )
+            ],
+            [
+                button(
+                    tr(context, "roof_composite"),
+                    "roof_composite",
+                )
+            ],
+            [
+                button(
+                    tr(context, "roof_deck"),
+                    "roof_deck",
+                )
+            ],
+            [
+                button(
+                    tr(context, "roof_slab"),
+                    "roof_slab",
+                )
+            ],
+            [
+                button(
+                    tr(context, "roof_waffle"),
+                    "roof_waffle",
+                )
+            ],
+            [button(tr(context, "back"), "home")],
+        ]
+    )
+
+    await edit_message(update, tr(context, "roofs"), keyboard)
+
+
+async def show_stairs_menu(update, context):
+    keyboard = InlineKeyboardMarkup(
+        [
+            [button(tr(context, "stair_slab"), "stair_calc")],
+            [button(tr(context, "back"), "home")],
+        ]
+    )
+
+    await edit_message(update, tr(context, "stairs"), keyboard)
+
+
+async def show_ties_menu(update, context):
+    keyboard = InlineKeyboardMarkup(
+        [
+            [button(tr(context, "tie_beam"), "tie_beam_calc")],
+            [button(tr(context, "tie_collar"), "tie_collar_calc")],
+            [button(tr(context, "back"), "home")],
+        ]
+    )
+
+    await edit_message(update, tr(context, "ties"), keyboard)
+
+
+async def show_walls_menu(update, context):
+    keyboard = InlineKeyboardMarkup(
+        [
+            [button(tr(context, "shear_wall"), "wall_shear")],
+            [button(tr(context, "retaining_wall"), "wall_retaining")],
+            [button(tr(context, "back"), "home")],
+        ]
+    )
+
+    await edit_message(update, tr(context, "walls"), keyboard)
+
 
 # =========================================================
-# منوهای عمومی
+# WIZARD DEFINITIONS
 # =========================================================
 
-async def show_help(update, context):
+WIZARDS = {
+
+    "isolated": {
+        "title": "isolated",
+        "fields": [
+            ("count", "int"),
+            ("length_m", "float"),
+            ("width_m", "float"),
+            ("thickness_m", "float"),
+            ("lean_concrete_length_m", "float"),
+            ("lean_concrete_width_m", "float"),
+            ("lean_concrete_thickness_m", "float"),
+            ("bottom_diameter_mm", "float"),
+            ("bottom_spacing_mm", "float"),
+            ("top_diameter_mm", "float"),
+            ("top_spacing_mm", "float"),
+            ("cover_mm", "float"),
+            ("lap_percent", "float"),
+            ("pedestal_length_m", "float"),
+            ("pedestal_width_m", "float"),
+            ("pedestal_height_m", "float"),
+        ],
+    },
+
+    "strip": {
+        "title": "strip",
+        "fields": [
+            ("strip_count", "int"),
+            ("strip_length_m", "float"),
+            ("footing_width_m", "float"),
+            ("footing_thickness_m", "float"),
+            ("lean_length_m", "float"),
+            ("lean_width_m", "float"),
+            ("lean_thickness_m", "float"),
+            ("longitudinal_diameter_mm", "float"),
+            ("longitudinal_count", "int"),
+            ("transverse_diameter_mm", "float"),
+            ("transverse_spacing_mm", "float"),
+            ("top_longitudinal_diameter_mm", "float"),
+            ("top_longitudinal_count", "int"),
+            ("top_transverse_diameter_mm", "float"),
+            ("top_transverse_spacing_mm", "float"),
+            ("cover_mm", "float"),
+            ("lap_percent", "float"),
+        ],
+    },
+
+    "raft": {
+        "title": "raft",
+        "fields": [
+            ("length_m", "float"),
+            ("width_m", "float"),
+            ("thickness_m", "float"),
+            ("lean_length_m", "float"),
+            ("lean_width_m", "float"),
+            ("lean_thickness_m", "float"),
+            ("bottom_x_diameter_mm", "float"),
+            ("bottom_x_spacing_mm", "float"),
+            ("bottom_y_diameter_mm", "float"),
+            ("bottom_y_spacing_mm", "float"),
+            ("top_x_diameter_mm", "float"),
+            ("top_x_spacing_mm", "float"),
+            ("top_y_diameter_mm", "float"),
+            ("top_y_spacing_mm", "float"),
+            ("cover_mm", "float"),
+            ("lap_percent", "float"),
+        ],
+    },
+
+    "column_rect": {
+        "title": "rect_column",
+        "fields": [
+            ("count", "int"),
+            ("width_m", "float"),
+            ("depth_m", "float"),
+            ("height_m", "float"),
+            ("main_diameter_mm", "float"),
+            ("main_count", "int"),
+            ("stirrup_diameter_mm", "float"),
+            ("stirrup_spacing_mm", "float"),
+            ("cover_mm", "float"),
+        ],
+    },
+
+    "column_round": {
+        "title": "round_column",
+        "fields": [
+            ("count", "int"),
+            ("diameter_m", "float"),
+            ("height_m", "float"),
+            ("main_diameter_mm", "float"),
+            ("main_count", "int"),
+            ("stirrup_diameter_mm", "float"),
+            ("stirrup_spacing_mm", "float"),
+            ("cover_mm", "float"),
+        ],
+    },
+
+    "beam_main": {
+        "title": "main_beam",
+        "fields": [
+            ("count", "int"),
+            ("length_m", "float"),
+            ("width_m", "float"),
+            ("height_m", "float"),
+            ("main_diameter_mm", "float"),
+            ("main_top_count", "int"),
+            ("main_bottom_count", "int"),
+            ("stirrup_diameter_mm", "float"),
+            ("stirrup_spacing_mm", "float"),
+            ("cover_mm", "float"),
+        ],
+    },
+
+    "beam_secondary": {
+        "title": "secondary_beam",
+        "fields": [
+            ("count", "int"),
+            ("length_m", "float"),
+            ("width_m", "float"),
+            ("height_m", "float"),
+            ("main_diameter_mm", "float"),
+            ("main_top_count", "int"),
+            ("main_bottom_count", "int"),
+            ("stirrup_diameter_mm", "float"),
+            ("stirrup_spacing_mm", "float"),
+            ("cover_mm", "float"),
+        ],
+    },
+
+    "tie_beam_calc": {
+        "title": "tie_beam",
+        "fields": [
+            ("count", "int"),
+            ("length_m", "float"),
+            ("width_m", "float"),
+            ("height_m", "float"),
+            ("main_diameter_mm", "float"),
+            ("main_count", "int"),
+            ("stirrup_diameter_mm", "float"),
+            ("stirrup_spacing_mm", "float"),
+            ("cover_mm", "float"),
+        ],
+    },
+
+    "tie_collar_calc": {
+        "title": "tie_collar",
+        "fields": [
+            ("count", "int"),
+            ("length_m", "float"),
+            ("width_m", "float"),
+            ("height_m", "float"),
+            ("main_diameter_mm", "float"),
+            ("main_count", "int"),
+            ("stirrup_diameter_mm", "float"),
+            ("stirrup_spacing_mm", "float"),
+            ("cover_mm", "float"),
+        ],
+    },
+
+    "wall_shear": {
+        "title": "shear_wall",
+        "fields": [
+            ("count", "int"),
+            ("length_m", "float"),
+            ("height_m", "float"),
+            ("thickness_m", "float"),
+            ("vertical_diameter_mm", "float"),
+            ("vertical_spacing_mm", "float"),
+            ("horizontal_diameter_mm", "float"),
+            ("horizontal_spacing_mm", "float"),
+            ("cover_mm", "float"),
+        ],
+    },
+
+    "wall_retaining": {
+        "title": "retaining_wall",
+        "fields": [
+            ("count", "int"),
+            ("length_m", "float"),
+            ("height_m", "float"),
+            ("thickness_m", "float"),
+            ("vertical_diameter_mm", "float"),
+            ("vertical_spacing_mm", "float"),
+            ("horizontal_diameter_mm", "float"),
+            ("horizontal_spacing_mm", "float"),
+            ("cover_mm", "float"),
+        ],
+    },
+
+    "stair_calc": {
+        "title": "stair_slab",
+        "fields": [
+            ("length_m", "float"),
+            ("width_m", "float"),
+            ("thickness_m", "float"),
+            ("main_diameter_mm", "float"),
+            ("main_spacing_mm", "float"),
+            ("distribution_diameter_mm", "float"),
+            ("distribution_spacing_mm", "float"),
+            ("steps", "int"),
+            ("step_riser", "float"),
+            ("step_tread", "float"),
+        ],
+    },
+
+    "roof": {
+        "title": "roof_slab",
+        "fields": [
+            ("area_m2", "float"),
+            ("rebar_kg_m2", "float"),
+        ],
+    },
+}
+
+
+def field_label(context, field):
+    key = field[0]
+
+    special = {
+        "length_m": "length",
+        "width_m": "width",
+        "height_m": "height",
+        "thickness_m": "thickness",
+
+        "lean_concrete_length_m": "lean_length",
+        "lean_concrete_width_m": "lean_width",
+        "lean_concrete_thickness_m": "lean_thickness",
+
+        "lean_length_m": "lean_length",
+        "lean_width_m": "lean_width",
+        "lean_thickness_m": "lean_thickness",
+
+        "pedestal_length_m": "pedestal_length",
+        "pedestal_width_m": "pedestal_width",
+        "pedestal_height_m": "pedestal_height",
+
+        "bottom_diameter_mm": "bottom_diameter",
+        "bottom_spacing_mm": "bottom_spacing",
+        "top_diameter_mm": "top_diameter",
+        "top_spacing_mm": "top_spacing",
+
+        "longitudinal_diameter_mm": "longitudinal_diameter",
+        "longitudinal_count": "longitudinal_count",
+        "transverse_diameter_mm": "transverse_diameter",
+        "transverse_spacing_mm": "transverse_spacing",
+
+        "top_longitudinal_diameter_mm": "top_longitudinal_diameter",
+        "top_longitudinal_count": "top_longitudinal_count",
+        "top_transverse_diameter_mm": "top_transverse_diameter",
+        "top_transverse_spacing_mm": "top_transverse_spacing",
+
+        "bottom_x_diameter_mm": "bottom_x_diameter",
+        "bottom_x_spacing_mm": "bottom_x_spacing",
+        "bottom_y_diameter_mm": "bottom_y_diameter",
+        "bottom_y_spacing_mm": "bottom_y_spacing",
+        "top_x_diameter_mm": "top_x_diameter",
+        "top_x_spacing_mm": "top_x_spacing",
+        "top_y_diameter_mm": "top_y_diameter",
+        "top_y_spacing_mm": "top_y_spacing",
+
+        "main_diameter_mm": "main_diameter",
+        "main_count": "main_count",
+        "main_top_count": "main_top_count",
+        "main_bottom_count": "main_bottom_count",
+
+        "stirrup_diameter_mm": "stirrup_diameter",
+        "stirrup_spacing_mm": "stirrup_spacing",
+
+        "vertical_diameter_mm": "vertical_diameter",
+        "vertical_spacing_mm": "vertical_spacing",
+        "horizontal_diameter_mm": "horizontal_diameter",
+        "horizontal_spacing_mm": "horizontal_spacing",
+
+        "area_m2": "area",
+        "rebar_kg_m2": "rebar_kg_m2",
+
+        "step_riser": "riser",
+        "step_tread": "tread",
+    }
+
+    return tr(context, special.get(key, key))
+
+
+def build_prompt(context, field):
+    key, typ = field
+
+    label = field_label(context, field)
+
+    if key == "count" or key == "strip_count":
+        return f"🔢 {label}\n\n{tr(context, 'ask_count')}"
+
+    if key.endswith("_diameter_mm"):
+        return (
+            f"🔩 {label}\n\n"
+            f"{tr(context, 'ask_diameter')}\n"
+            f"{tr(context, 'ask_zero')}"
+        )
+
+    if key.endswith("_spacing_mm"):
+        return (
+            f"📏 {label}\n\n"
+            f"{tr(context, 'ask_spacing')}\n"
+            f"{tr(context, 'ask_zero')}"
+        )
+
+    if key == "cover_mm":
+        return f"📏 {label}\n\n{tr(context, 'ask_cover')}"
+
+    if key == "lap_percent":
+        return f"🔗 {label}\n\n{tr(context, 'ask_lap')}"
+
+    if key.endswith("_m"):
+        if "length" in key:
+            return f"📐 {label}\n\n{tr(context, 'ask_length')}"
+        if "width" in key:
+            return f"📐 {label}\n\n{tr(context, 'ask_width')}"
+        if "height" in key:
+            return f"📐 {label}\n\n{tr(context, 'ask_height')}"
+        if "thickness" in key:
+            return f"📐 {label}\n\n{tr(context, 'ask_thickness')}"
+
+    if key == "area_m2":
+        return f"📐 {label}\n\n{tr(context, 'ask_length')}"
+
+    if key in ("steps",):
+        return f"🔢 {label}\n\n{tr(context, 'ask_count')}"
+
+    return f"📌 {label}\n\n"
+
+
+# =========================================================
+# WIZARD START
+# =========================================================
+
+async def start_wizard(update, context, wizard_name):
+    context.user_data["wizard"] = {
+        "name": wizard_name,
+        "index": 0,
+        "data": {},
+    }
+
+    wizard = WIZARDS[wizard_name]
+    first_field = wizard["fields"][0]
+
     text = (
-        "ℹ️ <b>راهنمای ربات</b>\n\n"
-        "این ربات برای برآورد اولیه حجم بتن و مقدار میلگرد "
-        "اعضای مختلف اسکلت بتنی طراحی شده است.\n\n"
-        "مقادیر ابعادی و مشخصات میلگرد را وارد کنید تا نتیجه "
-        "بر اساس اطلاعات واردشده محاسبه شود.\n\n"
-        "⚠️ نتایج متره و برآورد اولیه هستند و جایگزین نقشه "
-        "سازه و محاسبات مهندس محاسب نیستند."
+        f"🏗️ {tr(context, wizard['title'])}\n\n"
+        f"{build_prompt(context, first_field)}"
     )
 
-    await update.callback_query.edit_message_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🔙 برگشت", callback_data="home")]]
-        ),
-        parse_mode="HTML",
+    keyboard = InlineKeyboardMarkup(
+        [[button(tr(context, "cancel"), "cancel_wizard")]]
     )
 
-
-async def show_settings(update, context):
-    text = (
-        "⚙️ <b>تنظیمات</b>\n\n"
-        "واحد طول: متر / میلی‌متر\n"
-        "واحد بتن: مترمکعب\n"
-        "واحد میلگرد: کیلوگرم\n"
-        "طول شاخه استاندارد: ۱۲ متر"
-    )
-
-    await update.callback_query.edit_message_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🔙 برگشت", callback_data="home")]]
-        ),
-        parse_mode="HTML",
-    )
-
-
-async def show_summary(update, context):
-    text = (
-        "📊 <b>خلاصه پروژه</b>\n\n"
-        "فعلاً نتیجه‌ها برای هر محاسبه جداگانه نمایش داده می‌شوند.\n\n"
-        "در مرحله بعد می‌توانیم نتایج چند عضو را در یک پروژه "
-        "ذخیره و جمع کل بتن و میلگرد پروژه را محاسبه کنیم."
-    )
-
-    await update.callback_query.edit_message_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🔙 برگشت", callback_data="home")]]
-        ),
-        parse_mode="HTML",
-    )
+    if update.callback_query:
+        await edit_message(update, text, keyboard)
+    else:
+        await update.message.reply_text(
+            text,
+            reply_markup=keyboard,
+        )
 
 
 # =========================================================
-# Callback Router
+# WIZARD PROCESS
 # =========================================================
 
-async def route_callback(query, context, data):
-    update = Update(
-        update_id=0,
-        callback_query=query,
+async def handle_wizard_text(update, context):
+    wizard_state = context.user_data.get("wizard")
+
+    if not wizard_state:
+        return False
+
+    wizard_name = wizard_state["name"]
+    wizard = WIZARDS[wizard_name]
+
+    index = wizard_state["index"]
+
+    if index >= len(wizard["fields"]):
+        return False
+
+    field = wizard["fields"][index]
+    key, typ = field
+
+    value = parse_value(
+        update.message.text,
+        integer=(typ == "int"),
     )
 
-    if data == "home":
-        await send_home(update, context)
+    if value is None:
+        await update.message.reply_text(
+            tr(context, "invalid_number")
+        )
+        return True
 
-    elif data == "foundation":
-        await foundation_menu(update, context)
-
-    elif data == "columns":
-        await columns_menu(update, context)
-
-    elif data == "beams":
-        await beams_menu(update, context)
-
-    elif data == "roofs":
-        await roofs_menu(update, context)
-
-    elif data == "ties":
-        await ties_menu(update, context)
-
-    elif data == "walls":
-        await walls_menu(update, context)
-
-    elif data == "foundation_isolated":
-        await start_isolated(update, context)
-
-    elif data == "foundation_strip":
-        await start_strip(update, context)
-
-    elif data == "foundation_raft":
-        await start_raft(update, context)
-
-    elif data == "column_rect":
-        await start_column_rect(update, context)
-
-    elif data == "column_round":
-        await start_column_round(update, context)
-
-    elif data == "beam_main":
-        await start_beam(update, context, secondary=False)
-
-    elif data == "beam_secondary":
-        await start_beam(update, context, secondary=True)
-
-    elif data == "tie_beam":
-        await start_tie(update, context)
-
-    elif data == "wall_shear":
-        await start_wall(update, context, "دیوار برشی")
-
-    elif data == "wall_retaining":
-        await start_wall(update, context, "دیوار حائل")
-
-    elif data == "stair":
-        await start_stair(update, context)
-
-    elif data.startswith("roof_"):
-        roof_map = {
-            "roof_یونولیتی": "تیرچه یونولیتی",
-            "roof_سفالی": "تیرچه سفالی",
-            "roof_دوبل": "تیرچه دوبل",
-            "roof_کرومیت": "کرومیت",
-            "roof_کامپوزیت": "کامپوزیت",
-            "roof_عرشه": "عرشه فولادی",
-            "roof_دال": "دال بتنی",
-            "roof_وافل": "وافل",
+    # allow zero for optional rebar sections
+    if value == 0:
+        optional_keys = {
+            "top_diameter_mm",
+            "top_spacing_mm",
+            "top_longitudinal_diameter_mm",
+            "top_longitudinal_count",
+            "top_transverse_diameter_mm",
+            "top_transverse_spacing_mm",
+            "top_x_diameter_mm",
+            "top_x_spacing_mm",
+            "top_y_diameter_mm",
+            "top_y_spacing_mm",
         }
 
-        roof_type = roof_map.get(data)
+        if key not in optional_keys and key not in {
+            "pedestal_length_m",
+            "pedestal_width_m",
+            "pedestal_height_m",
+        }:
+            await update.message.reply_text(
+                tr(context, "positive_number")
+            )
+            return True
 
-        if roof_type:
-            await start_roof(update, context, roof_type)
+    wizard_state["data"][key] = value
+    wizard_state["index"] += 1
 
-    elif data == "wizard_back":
-        await wizard_back(update, context)
+    if wizard_state["index"] >= len(wizard["fields"]):
+        await finish_wizard(update, context)
+        return True
 
-    elif data == "result_rebar":
-        await show_rebar_result(update, context)
+    next_field = wizard["fields"][wizard_state["index"]]
 
-    elif data == "result_cutlist":
-        await show_cutlist_result(update, context)
+    await update.message.reply_text(
+        build_prompt(context, next_field),
+        reply_markup=InlineKeyboardMarkup(
+            [[button(tr(context, "cancel"), "cancel_wizard")]]
+        ),
+    )
 
-    elif data == "result_main":
-        await show_generic_result(update, context)
+    return True
 
-    elif data == "result_back":
-        callback = context.user_data.get(
-            "back_callback",
-            "home",
+
+# =========================================================
+# CALCULATIONS
+# =========================================================
+
+def execute_calculation(name, data):
+    if name == "isolated":
+        return isolated_footing(
+            count=data["count"],
+            length_m=data["length_m"],
+            width_m=data["width_m"],
+            thickness_m=data["thickness_m"],
+            lean_concrete_length_m=data["lean_concrete_length_m"],
+            lean_concrete_width_m=data["lean_concrete_width_m"],
+            lean_concrete_thickness_m=data["lean_concrete_thickness_m"],
+            bottom_diameter_mm=data["bottom_diameter_mm"],
+            bottom_spacing_mm=data["bottom_spacing_mm"],
+            top_diameter_mm=data["top_diameter_mm"] or None,
+            top_spacing_mm=data["top_spacing_mm"] or None,
+            cover_mm=data["cover_mm"],
+            lap_percent=data["lap_percent"],
+            pedestal_length_m=data["pedestal_length_m"],
+            pedestal_width_m=data["pedestal_width_m"],
+            pedestal_height_m=data["pedestal_height_m"],
         )
-        await route_callback(query, context, callback)
 
-    elif data == "result_new":
-        callback = context.user_data.get(
-            "back_callback",
-            "home",
+    if name == "strip":
+        return strip_footing(
+            strip_count=data["strip_count"],
+            strip_length_m=data["strip_length_m"],
+            footing_width_m=data["footing_width_m"],
+            footing_thickness_m=data["footing_thickness_m"],
+            lean_length_m=data["lean_length_m"],
+            lean_width_m=data["lean_width_m"],
+            lean_thickness_m=data["lean_thickness_m"],
+            longitudinal_diameter_mm=data["longitudinal_diameter_mm"],
+            longitudinal_count=data["longitudinal_count"],
+            transverse_diameter_mm=data["transverse_diameter_mm"],
+            transverse_spacing_mm=data["transverse_spacing_mm"],
+            top_longitudinal_diameter_mm=(
+                data["top_longitudinal_diameter_mm"] or None
+            ),
+            top_longitudinal_count=(
+                data["top_longitudinal_count"] or None
+            ),
+            top_transverse_diameter_mm=(
+                data["top_transverse_diameter_mm"] or None
+            ),
+            top_transverse_spacing_mm=(
+                data["top_transverse_spacing_mm"] or None
+            ),
+            cover_mm=data["cover_mm"],
+            lap_percent=data["lap_percent"],
         )
-        await route_callback(query, context, callback)
 
-    elif data == "summary":
-        await show_summary(update, context)
+    if name == "raft":
+        return raft_foundation(
+            length_m=data["length_m"],
+            width_m=data["width_m"],
+            thickness_m=data["thickness_m"],
+            lean_length_m=data["lean_length_m"],
+            lean_width_m=data["lean_width_m"],
+            lean_thickness_m=data["lean_thickness_m"],
+            bottom_x_diameter_mm=data["bottom_x_diameter_mm"],
+            bottom_x_spacing_mm=data["bottom_x_spacing_mm"],
+            bottom_y_diameter_mm=data["bottom_y_diameter_mm"],
+            bottom_y_spacing_mm=data["bottom_y_spacing_mm"],
+            top_x_diameter_mm=data["top_x_diameter_mm"] or None,
+            top_x_spacing_mm=data["top_x_spacing_mm"] or None,
+            top_y_diameter_mm=data["top_y_diameter_mm"] or None,
+            top_y_spacing_mm=data["top_y_spacing_mm"] or None,
+            cover_mm=data["cover_mm"],
+            lap_percent=data["lap_percent"],
+        )
 
-    elif data == "settings":
-        await show_settings(update, context)
+    if name == "column_rect":
+        return column_rectangular(
+            count=data["count"],
+            width_m=data["width_m"],
+            depth_m=data["depth_m"],
+            height_m=data["height_m"],
+            main_diameter_mm=data["main_diameter_mm"],
+            main_count=data["main_count"],
+            stirrup_diameter_mm=data["stirrup_diameter_mm"],
+            stirrup_spacing_mm=data["stirrup_spacing_mm"],
+            cover_mm=data["cover_mm"],
+        )
 
-    elif data == "help":
-        await show_help(update, context)
+    if name == "column_round":
+        return column_round(
+            count=data["count"],
+            diameter_m=data["diameter_m"],
+            height_m=data["height_m"],
+            main_diameter_mm=data["main_diameter_mm"],
+            main_count=data["main_count"],
+            stirrup_diameter_mm=data["stirrup_diameter_mm"],
+            stirrup_spacing_mm=data["stirrup_spacing_mm"],
+            cover_mm=data["cover_mm"],
+        )
+
+    if name in ("beam_main", "beam_secondary"):
+        return beam(
+            count=data["count"],
+            length_m=data["length_m"],
+            width_m=data["width_m"],
+            height_m=data["height_m"],
+            main_diameter_mm=data["main_diameter_mm"],
+            main_top_count=data["main_top_count"],
+            main_bottom_count=data["main_bottom_count"],
+            stirrup_diameter_mm=data["stirrup_diameter_mm"],
+            stirrup_spacing_mm=data["stirrup_spacing_mm"],
+            cover_mm=data["cover_mm"],
+        )
+
+    if name in ("tie_beam_calc", "tie_collar_calc"):
+        return tie_beam(
+            count=data["count"],
+            length_m=data["length_m"],
+            width_m=data["width_m"],
+            height_m=data["height_m"],
+            main_diameter_mm=data["main_diameter_mm"],
+            main_count=data["main_count"],
+            stirrup_diameter_mm=data["stirrup_diameter_mm"],
+            stirrup_spacing_mm=data["stirrup_spacing_mm"],
+            cover_mm=data["cover_mm"],
+        )
+
+    if name in ("wall_shear", "wall_retaining"):
+        one = wall_concrete(
+            length_m=data["length_m"],
+            height_m=data["height_m"],
+            thickness_m=data["thickness_m"],
+            vertical_diameter_mm=data["vertical_diameter_mm"],
+            vertical_spacing_mm=data["vertical_spacing_mm"],
+            horizontal_diameter_mm=data["horizontal_diameter_mm"],
+            horizontal_spacing_mm=data["horizontal_spacing_mm"],
+            cover_mm=data["cover_mm"],
+        )
+
+        count = data["count"]
+
+        if count != 1:
+            one["concrete_m3"] *= count
+            one["total_rebar_kg"] *= count
+
+            if "rebar_details" in one:
+                for item in one["rebar_details"]:
+                    item["weight_kg"] *= count
+                    item["piece_count"] *= count
+
+        return one
+
+    if name == "stair_calc":
+        return stair_slab(
+            length_m=data["length_m"],
+            width_m=data["width_m"],
+            thickness_m=data["thickness_m"],
+            main_diameter_mm=data["main_diameter_mm"],
+            main_spacing_mm=data["main_spacing_mm"],
+            distribution_diameter_mm=data["distribution_diameter_mm"],
+            distribution_spacing_mm=data["distribution_spacing_mm"],
+            steps=data["steps"],
+            step_riser=data["step_riser"],
+            step_tread=data["step_tread"],
+        )
+
+    if name == "roof":
+        return roof_slab(
+            area_m2=data["area_m2"],
+            concrete_coefficient=data.get("concrete_coefficient", 0.20),
+            rebar_kg_m2=data["rebar_kg_m2"],
+        )
+
+    raise ValueError(f"Unknown wizard: {name}")
 
 
-async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
+# =========================================================
+# FORMAT RESULT
+# =========================================================
+
+def fmt(value, digits=2):
+    if value is None:
+        return "0"
 
     try:
-        await query.answer()
+        return f"{float(value):.{digits}f}"
     except Exception:
-        pass
+        return str(value)
 
-    await route_callback(query, context, query.data)
+
+def safe_num(value):
+    try:
+        return float(value)
+    except Exception:
+        return 0.0
+
+
+def make_block(lines):
+    content = "\n".join(lines)
+    return f"<pre>{html.escape(content)}</pre>"
+
+
+def format_rebar(context, result):
+    details = result.get("rebar_details") or []
+
+    if not details:
+        return make_block([
+            tr(context, "rebar"),
+            "────────────────────",
+            tr(context, "no_data"),
+        ])
+
+    lines = [
+        "🔩 " + tr(context, "rebar"),
+        "━━━━━━━━━━━━━━━━━━━━",
+    ]
+
+    for i, item in enumerate(details, 1):
+        diameter = item.get("diameter_mm", 0)
+        count = item.get("piece_count", 0)
+        length = item.get("length_m", 0)
+        weight = item.get("weight_kg", 0)
+        bars = item.get("bars_12m", 0)
+        waste = item.get("waste_m", 0)
+
+        piece_lengths = item.get("piece_lengths_m") or []
+
+        unique_lengths = Counter(
+            round(float(x), 3)
+            for x in piece_lengths
+        )
+
+        if len(unique_lengths) == 1:
+            length_text = fmt(next(iter(unique_lengths.keys())), 3) + " m"
+        else:
+            length_text = ", ".join(
+                f"{x:.3f} m × {n}"
+                for x, n in unique_lengths.items()
+            )
+
+        lines.extend(
+            [
+                "",
+                f"{tr(context, 'bar')} {i}",
+                f"{tr(context, 'diameter_label')}:      Φ{fmt(diameter, 0)}",
+                f"{tr(context, 'piece_count')}:        {int(count)}",
+                f"{tr(context, 'piece_length')}:   {length_text}",
+                f"{tr(context, 'weight')}:           {fmt(weight, 1)} kg",
+                f"{tr(context, 'bars12')}:      {int(bars)}",
+                f"{tr(context, 'waste')}:           {fmt(waste, 2)} m",
+                "━━━━━━━━━━━━━━━━━━━━",
+            ]
+        )
+
+    lines.extend(
+        [
+            f"{tr(context, 'total_rebar')}: "
+            f"{fmt(result.get('total_rebar_kg', 0), 1)} kg"
+        ]
+    )
+
+    return make_block(lines)
+
+
+def format_cutlist(context, result):
+    details = result.get("rebar_details") or []
+
+    if not details:
+        return make_block([
+            "✂️ " + tr(context, "cutlist"),
+            "━━━━━━━━━━━━━━━━━━━━",
+            tr(context, "no_data"),
+        ])
+
+    lines = [
+        "✂️ " + tr(context, "cutlist"),
+        "━━━━━━━━━━━━━━━━━━━━",
+    ]
+
+    branch_no = 1
+
+    for item in details:
+        cut_plan = item.get("cut_plan") or []
+
+        if not cut_plan:
+            continue
+
+        diameter = item.get("diameter_mm", 0)
+
+        for plan in cut_plan:
+            if isinstance(plan, dict):
+                cuts = (
+                    plan.get("cuts")
+                    or plan.get("pieces")
+                    or plan.get("lengths")
+                    or []
+                )
+
+                waste = plan.get("waste_m", 0)
+
+                lines.extend(
+                    [
+                        "",
+                        f"{tr(context, 'branch')} {branch_no}",
+                        f"{tr(context, 'diameter_label')}: Φ{fmt(diameter, 0)}",
+                        f"{tr(context, 'branch_length')}: 12.00 m",
+                        f"{tr(context, 'pieces')}: "
+                        + (
+                            " + ".join(
+                                f"{safe_num(x):.3f}"
+                                for x in cuts
+                            )
+                            if cuts
+                            else "-"
+                        ),
+                        f"{tr(context, 'waste')}: {safe_num(waste):.3f} m",
+                        "━━━━━━━━━━━━━━━━━━━━",
+                    ]
+                )
+
+                branch_no += 1
+
+    if branch_no == 1:
+        return make_block([
+            "✂️ " + tr(context, "cutlist"),
+            "━━━━━━━━━━━━━━━━━━━━",
+            tr(context, "no_data"),
+        ])
+
+    return make_block(lines)
+
+
+def format_result(context, name, result):
+    lines = [
+        "🏗️ " + tr(context, WIZARDS[name]["title"]),
+        "━━━━━━━━━━━━━━━━━━━━",
+    ]
+
+    # Generic concrete values
+    if "concrete_m3" in result:
+        lines.append(
+            f"{tr(context, 'concrete')}: "
+            f"{fmt(result.get('concrete_m3', 0))} m³"
+        )
+
+    if "footing_concrete_m3" in result:
+        lines.append(
+            f"{tr(context, 'concrete')}: "
+            f"{fmt(result.get('footing_concrete_m3', 0))} m³"
+        )
+
+    if "lean_concrete_m3" in result:
+        lines.append(
+            f"{tr(context, 'lean_concrete')}: "
+            f"{fmt(result.get('lean_concrete_m3', 0))} m³"
+        )
+
+    if "pedestal_concrete_m3" in result:
+        lines.append(
+            f"{tr(context, 'pedestal')}: "
+            f"{fmt(result.get('pedestal_concrete_m3', 0))} m³"
+        )
+
+    if "total_concrete_m3" in result:
+        lines.append(
+            f"{tr(context, 'total_concrete')}: "
+            f"{fmt(result.get('total_concrete_m3', 0))} m³"
+        )
+
+    if "total_rebar_kg" in result:
+        lines.append(
+            f"{tr(context, 'total_rebar')}: "
+            f"{fmt(result.get('total_rebar_kg', 0), 1)} kg"
+        )
+
+    lines.append("━━━━━━━━━━━━━━━━━━━━")
+
+    return make_block(lines)
 
 
 # =========================================================
-# دریافت ورودی عددی
+# SEND LONG MESSAGE IN PARTS
 # =========================================================
 
-async def receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def send_long(update, text):
+    MAX = 3800
+
+    if len(text) <= MAX:
+        await update.message.reply_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=bottom_menu_from_update(update),
+        )
+        return
+
+    chunks = []
+
+    while len(text) > MAX:
+        cut = text.rfind("\n", 0, MAX)
+
+        if cut < 500:
+            cut = MAX
+
+        chunks.append(text[:cut])
+        text = text[cut:]
+
+    chunks.append(text)
+
+    for chunk in chunks:
+        await update.message.reply_text(
+            chunk,
+            parse_mode="HTML",
+        )
+
+
+def bottom_menu_from_update(update):
+    # context is unavailable here, so fallback is intentionally not used
+    return None
+
+
+# =========================================================
+# FINISH WIZARD
+# =========================================================
+
+async def finish_wizard(update, context):
+    wizard_state = context.user_data.get("wizard")
+
+    if not wizard_state:
+        return
+
+    name = wizard_state["name"]
+    data = wizard_state["data"]
+
+    try:
+        result = execute_calculation(name, data)
+
+    except Exception as exc:
+        traceback.print_exc()
+
+        context.user_data.pop("wizard", None)
+
+        await update.message.reply_text(
+            f"❌ {html.escape(str(exc))}",
+            reply_markup=bottom_menu(context),
+        )
+        return
+
+    # Store project result
+    project_results = context.user_data.setdefault(
+        "project_results",
+        [],
+    )
+
+    project_results.append(
+        {
+            "name": name,
+            "result": result,
+        }
+    )
+
+    context.user_data["last_result"] = result
+    context.user_data["last_result_name"] = name
+
+    context.user_data.pop("wizard", None)
+
+    await update.message.reply_text(
+        format_result(context, name, result),
+        parse_mode="HTML",
+        reply_markup=bottom_menu(context),
+    )
+
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                button(tr(context, "rebar"), "result_rebar"),
+                button(tr(context, "cutlist"), "result_cut"),
+            ],
+            [
+                button(tr(context, "new_calc"), "home"),
+            ],
+        ]
+    )
+
+    await update.message.reply_text(
+        tr(context, "done"),
+        reply_markup=keyboard,
+    )
+
+
+# =========================================================
+# SUMMARY
+# =========================================================
+
+async def show_summary(update, context):
+    results = context.user_data.get("project_results") or []
+
+    if not results:
+        await edit_message(
+            update,
+            tr(context, "no_summary"),
+            InlineKeyboardMarkup(
+                [[button(tr(context, "back"), "home")]]
+            ),
+        )
+        return
+
+    total_concrete = 0.0
+    total_rebar = 0.0
+
+    for item in results:
+        result = item["result"]
+
+        total_concrete += safe_num(
+            result.get("total_concrete_m3", 0)
+        )
+
+        if not result.get("total_concrete_m3"):
+            total_concrete += safe_num(
+                result.get("concrete_m3", 0)
+            )
+            total_concrete += safe_num(
+                result.get("lean_concrete_m3", 0)
+            )
+
+        total_rebar += safe_num(
+            result.get("total_rebar_kg", 0)
+        )
+
+    lines = [
+        "📊 " + tr(context, "project_summary"),
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"{tr(context, 'concrete')}: {total_concrete:.2f} m³",
+        f"{tr(context, 'total_rebar')}: {total_rebar:.1f} kg",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"تعداد آیتم‌ها: {len(results)}",
+    ]
+
+    await edit_message(
+        update,
+        make_block(lines),
+        InlineKeyboardMarkup(
+            [[button(tr(context, "back"), "home")]]
+        ),
+    )
+
+
+# =========================================================
+# SETTINGS
+# =========================================================
+
+async def show_settings(update, context):
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                button("🇮🇷 فارسی", "lang_fa"),
+                button("🇸🇦 العربية", "lang_ar"),
+            ],
+            [
+                button("🇬🇧 English", "lang_en"),
+                button("🇨🇳 中文", "lang_zh"),
+            ],
+            [
+                button(tr(context, "back"), "home"),
+            ],
+        ]
+    )
+
+    await edit_message(
+        update,
+        tr(context, "choose_language"),
+        keyboard,
+    )
+
+
+# =========================================================
+# CALLBACK ROUTER
+# =========================================================
+
+async def callback_router(update, context):
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+
+    if data == "home":
+        await show_home(update, context)
+        return
+
+    if data == "menu_foundation":
+        await show_foundation_menu(update, context)
+        return
+
+    if data == "menu_columns":
+        await show_columns_menu(update, context)
+        return
+
+    if data == "menu_beams":
+        await show_beams_menu(update, context)
+        return
+
+    if data == "menu_roofs":
+        await show_roofs_menu(update, context)
+        return
+
+    if data == "menu_stairs":
+        await show_stairs_menu(update, context)
+        return
+
+    if data == "menu_ties":
+        await show_ties_menu(update, context)
+        return
+
+    if data == "menu_walls":
+        await show_walls_menu(update, context)
+        return
+
+    if data == "settings":
+        await show_settings(update, context)
+        return
+
+    if data == "help":
+        await edit_message(
+            update,
+            tr(context, "help_text"),
+            InlineKeyboardMarkup(
+                [[button(tr(context, "back"), "home")]]
+            ),
+        )
+        return
+
+    if data == "summary":
+        await show_summary(update, context)
+        return
+
+    if data == "cancel_wizard":
+        context.user_data.pop("wizard", None)
+
+        await edit_message(
+            update,
+            tr(context, "cancelled"),
+            InlineKeyboardMarkup(
+                [[button(tr(context, "back"), "home")]]
+            ),
+        )
+        return
+
+    if data.startswith("lang_"):
+        lang = data.replace("lang_", "")
+
+        if lang in LANGS:
+            context.user_data["lang"] = lang
+
+        await query.answer(
+            tr(context, "language_changed")
+        )
+
+        await show_home(update, context)
+        return
+
+    wizard_map = {
+        "foundation_isolated": "isolated",
+        "foundation_strip": "strip",
+        "foundation_raft": "raft",
+
+        "column_rect": "column_rect",
+        "column_round": "column_round",
+
+        "beam_main": "beam_main",
+        "beam_secondary": "beam_secondary",
+
+        "tie_beam_calc": "tie_beam_calc",
+        "tie_collar_calc": "tie_collar_calc",
+
+        "wall_shear": "wall_shear",
+        "wall_retaining": "wall_retaining",
+
+        "stair_calc": "stair_calc",
+
+        "roof_joist_foam": "roof",
+        "roof_joist_clay": "roof",
+        "roof_double_joist": "roof",
+        "roof_keromet": "roof",
+        "roof_composite": "roof",
+        "roof_deck": "roof",
+        "roof_slab": "roof",
+        "roof_waffle": "roof",
+    }
+
+    if data in wizard_map:
+        wizard_name = wizard_map[data]
+
+        # Roof coefficient based on selected type
+        if wizard_name == "roof":
+            coefficients = {
+                "roof_joist_foam": 0.18,
+                "roof_joist_clay": 0.20,
+                "roof_double_joist": 0.23,
+                "roof_keromet": 0.18,
+                "roof_composite": 0.15,
+                "roof_deck": 0.15,
+                "roof_slab": 0.20,
+                "roof_waffle": 0.20,
+            }
+
+            context.user_data["roof_type"] = data
+            context.user_data["roof_coefficient"] = coefficients[data]
+
+        await start_wizard(update, context, wizard_name)
+        return
+
+    if data == "result_rebar":
+        result = context.user_data.get("last_result")
+
+        if not result:
+            await query.message.reply_text(
+                tr(context, "no_data")
+            )
+            return
+
+        await query.message.reply_text(
+            format_rebar(context, result),
+            parse_mode="HTML",
+        )
+        return
+
+    if data == "result_cut":
+        result = context.user_data.get("last_result")
+
+        if not result:
+            await query.message.reply_text(
+                tr(context, "no_data")
+            )
+            return
+
+        await query.message.reply_text(
+            format_cutlist(context, result),
+            parse_mode="HTML",
+        )
+        return
+
+
+# =========================================================
+# TEXT HANDLER
+# =========================================================
+
+async def text_handler(update, context):
     text = update.message.text.strip()
 
-    if text in ("☰ منو", "🏠 خانه"):
-        await send_home(update, context)
+    # Home / menu
+    if text in {
+        tr(context, "home"),
+        "🏠 خانه",
+        "🏠 Home",
+        "🏠 الرئيسية",
+        "🏠 首页",
+    }:
+        await show_home(update, context)
         return
 
-    if context.user_data.get("mode") != "wizard":
+    if text in {
+        tr(context, "menu"),
+        "☰ منو",
+        "☰ Menu",
+        "☰ القائمة",
+        "☰ 菜单",
+    }:
         await update.message.reply_text(
-            "از منوی پایین استفاده کن 👇",
-            reply_markup=bottom_menu(),
+            tr(context, "home_title"),
+            reply_markup=home_keyboard(context),
         )
         return
 
-    fields_list = context.user_data.get("fields_list", [])
-    index = context.user_data.get("index", 0)
+    # Cancel wizard
+    if text in {
+        tr(context, "cancel"),
+        "❌ لغو",
+        "❌ إلغاء",
+        "❌ Cancel",
+        "❌ 取消",
+    }:
+        context.user_data.pop("wizard", None)
 
-    if index >= len(fields_list):
-        return
-
-    key, label, field_type = fields_list[index]
-
-    try:
-        number = normalize_number(text)
-
-        if field_type == "int":
-            if number != int(number):
-                raise ValueError("integer required")
-
-            value = int(number)
-
-        else:
-            value = float(number)
-
-        if value < 0:
-            raise ValueError("negative")
-
-    except Exception:
         await update.message.reply_text(
-            "❌ مقدار واردشده معتبر نیست.\n\n"
-            "لطفاً فقط عدد وارد کن.\n"
-            "مثال: <code>2.5</code>",
-            parse_mode="HTML",
-            reply_markup=bottom_menu(),
+            tr(context, "cancelled"),
+            reply_markup=bottom_menu(context),
         )
         return
 
-    context.user_data["fields"][key] = value
-    context.user_data["index"] = index + 1
+    handled = await handle_wizard_text(update, context)
 
-    await ask_current_field(update, context)
+    if handled:
+        return
+
+    await update.message.reply_text(
+        tr(context, "home_title"),
+        reply_markup=home_keyboard(context),
+    )
 
 
 # =========================================================
-# Error Handler
+# COMMANDS
 # =========================================================
 
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logger.exception(
-        "Exception while handling update:",
-        exc_info=context.error,
+async def start_command(update, context):
+    context.user_data.setdefault("lang", "fa")
+    context.user_data.pop("wizard", None)
+
+    await update.message.reply_text(
+        tr(context, "start"),
+        reply_markup=bottom_menu(context),
+    )
+
+    await update.message.reply_text(
+        tr(context, "home_title"),
+        reply_markup=home_keyboard(context),
+    )
+
+
+async def cancel_command(update, context):
+    context.user_data.pop("wizard", None)
+
+    await update.message.reply_text(
+        tr(context, "cancelled"),
+        reply_markup=bottom_menu(context),
+    )
+
+
+# =========================================================
+# ERROR HANDLER
+# =========================================================
+
+async def error_handler(update, context):
+    print("BOT ERROR:")
+    traceback.print_exception(
+        type(context.error),
+        context.error,
+        context.error.__traceback__,
     )
 
     try:
-        if isinstance(update, Update) and update.effective_message:
+        if update and update.effective_message:
             await update.effective_message.reply_text(
-                "❌ یک خطای غیرمنتظره رخ داد.\n"
-                "لطفاً دوباره از منو شروع کن.",
-                reply_markup=bottom_menu(),
+                "❌ خطایی در پردازش درخواست رخ داد."
             )
     except Exception:
         pass
 
 
 # =========================================================
-# Main
+# MAIN
 # =========================================================
 
 def main():
-    if not BOT_TOKEN:
-        raise RuntimeError(
-            "BOT_TOKEN environment variable is not set."
-        )
-
-    application = Application.builder().token(BOT_TOKEN).build()
-
-    application.add_handler(
-        CommandHandler("start", start)
+    application = (
+        ApplicationBuilder()
+        .token(BOT_TOKEN)
+        .build()
     )
 
     application.add_handler(
-        CallbackQueryHandler(buttons)
+        CommandHandler("start", start_command)
+    )
+
+    application.add_handler(
+        CommandHandler("cancel", cancel_command)
+    )
+
+    application.add_handler(
+        CallbackQueryHandler(callback_router)
     )
 
     application.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
-            receive,
+            text_handler,
         )
     )
 
     application.add_error_handler(error_handler)
 
-    webhook_url = f"{RENDER_EXTERNAL_URL}/telegram"
+    port = int(os.getenv("PORT", "10000"))
 
-    logger.info("Starting bot with webhook...")
-    logger.info("Webhook URL: %s", webhook_url)
+    base_url = (
+        os.getenv("WEBHOOK_URL")
+        or os.getenv("RENDER_EXTERNAL_URL")
+    )
+
+    if not base_url:
+        raise RuntimeError(
+            "WEBHOOK_URL or RENDER_EXTERNAL_URL is required"
+        )
+
+    base_url = base_url.rstrip("/")
+
+    webhook_url = f"{base_url}/telegram"
+
+    print("Starting Telegram bot...")
+    print(f"Webhook URL: {webhook_url}")
+    print(f"Port: {port}")
 
     application.run_webhook(
         listen="0.0.0.0",
-        port=PORT,
+        port=port,
         url_path="telegram",
         webhook_url=webhook_url,
         allowed_updates=Update.ALL_TYPES,
