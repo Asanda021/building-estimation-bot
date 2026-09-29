@@ -21,6 +21,10 @@ REBAR_WEIGHT = {
 }
 
 
+# =========================================================
+# محاسبات پایه
+# =========================================================
+
 def rebar_weight(length_m, diameter_mm):
     if length_m <= 0:
         return 0
@@ -61,7 +65,7 @@ def number_of_bars_in_direction(
 
 
 # =========================================================
-# افزودن میلگرد به تفکیک قطر
+# تفکیک میلگرد بر اساس قطر
 # =========================================================
 
 def add_rebar_detail(
@@ -251,7 +255,6 @@ def isolated_footing(
         + top_weight
     )
 
-    # تفکیک بر اساس قطر
     rebar_details = {}
 
     add_rebar_detail(
@@ -271,11 +274,14 @@ def isolated_footing(
 
         "lean_concrete_m3": lean_concrete,
 
-        "footing_concrete_m3": footing_concrete,
+        "footing_concrete_m3":
+            footing_concrete,
 
-        "pedestal_concrete_m3": pedestal_concrete,
+        "pedestal_concrete_m3":
+            pedestal_concrete,
 
-        "total_concrete_m3": total_concrete,
+        "total_concrete_m3":
+            total_concrete,
 
         "bottom_rebar_length_m":
             bottom_total_length,
@@ -304,7 +310,7 @@ def isolated_footing(
 
 
 # =========================================================
-# پی نواری
+# پی نواری - کامل
 # =========================================================
 
 def strip_footing(
@@ -312,20 +318,31 @@ def strip_footing(
     strip_length_m,
     footing_width_m,
     footing_thickness_m,
+
     lean_length_m,
     lean_width_m,
     lean_thickness_m,
+
     longitudinal_diameter_mm,
     longitudinal_count,
+
     transverse_diameter_mm,
     transverse_spacing_mm,
-    top_diameter_mm=None,
-    top_spacing_mm=None,
+
+    top_longitudinal_diameter_mm=None,
+    top_longitudinal_count=None,
+
+    top_transverse_diameter_mm=None,
+    top_transverse_spacing_mm=None,
+
     cover_mm=50,
     lap_percent=10
 ):
 
+    # =====================================================
     # بتن سازه‌ای
+    # =====================================================
+
     footing_concrete = (
         strip_count
         * strip_length_m
@@ -333,9 +350,9 @@ def strip_footing(
         * footing_thickness_m
     )
 
-    # -------------------------
-    # میلگرد طولی
-    # -------------------------
+    # =====================================================
+    # میلگرد تحتانی طولی
+    # =====================================================
 
     longitudinal_length = (
         strip_count
@@ -353,9 +370,9 @@ def strip_footing(
         longitudinal_diameter_mm
     )
 
-    # -------------------------
-    # میلگرد عرضی
-    # -------------------------
+    # =====================================================
+    # میلگرد تحتانی عرضی
+    # =====================================================
 
     transverse_count = (
         math.ceil(
@@ -387,49 +404,83 @@ def strip_footing(
         transverse_diameter_mm
     )
 
-    # -------------------------
-    # میلگرد فوقانی
-    # -------------------------
+    # =====================================================
+    # میلگرد فوقانی طولی
+    # =====================================================
 
-    top_length = 0
-    top_weight = 0
+    top_longitudinal_length = 0
+    top_longitudinal_weight = 0
 
-    if top_diameter_mm and top_spacing_mm:
+    if (
+        top_longitudinal_diameter_mm
+        and top_longitudinal_count
+    ):
 
-        top_count = (
+        top_longitudinal_length = (
+            strip_count
+            * top_longitudinal_count
+            * strip_length_m
+        )
+
+        top_longitudinal_length = bar_length_with_lap(
+            top_longitudinal_length,
+            lap_percent
+        )
+
+        top_longitudinal_weight = rebar_weight(
+            top_longitudinal_length,
+            top_longitudinal_diameter_mm
+        )
+
+    # =====================================================
+    # میلگرد فوقانی عرضی
+    # =====================================================
+
+    top_transverse_length = 0
+    top_transverse_weight = 0
+
+    if (
+        top_transverse_diameter_mm
+        and top_transverse_spacing_mm
+    ):
+
+        top_transverse_count = (
             math.ceil(
                 strip_length_m * 1000
-                / top_spacing_mm
+                / top_transverse_spacing_mm
             )
             + 1
         )
 
-        top_length = (
+        top_transverse_length = (
             strip_count
-            * top_count
+            * top_transverse_count
             * transverse_length_each
         )
 
-        top_length = bar_length_with_lap(
-            top_length,
+        top_transverse_length = bar_length_with_lap(
+            top_transverse_length,
             lap_percent
         )
 
-        top_weight = rebar_weight(
-            top_length,
-            top_diameter_mm
+        top_transverse_weight = rebar_weight(
+            top_transverse_length,
+            top_transverse_diameter_mm
         )
 
-    total_concrete = footing_concrete
+    # =====================================================
+    # جمع میلگرد
+    # =====================================================
 
     total_rebar = (
         longitudinal_weight
         + transverse_weight
-        + top_weight
+        + top_longitudinal_weight
+        + top_transverse_weight
     )
 
     # =====================================================
-    # تفکیک میلگرد بر اساس قطر
+    # تفکیک قطر
     # =====================================================
 
     rebar_details = {}
@@ -448,8 +499,14 @@ def strip_footing(
 
     add_rebar_detail(
         rebar_details,
-        top_diameter_mm,
-        top_length
+        top_longitudinal_diameter_mm,
+        top_longitudinal_length
+    )
+
+    add_rebar_detail(
+        rebar_details,
+        top_transverse_diameter_mm,
+        top_transverse_length
     )
 
     return {
@@ -462,7 +519,7 @@ def strip_footing(
             footing_concrete,
 
         "total_concrete_m3":
-            total_concrete,
+            footing_concrete,
 
         "longitudinal_rebar_length_m":
             longitudinal_length,
@@ -476,11 +533,29 @@ def strip_footing(
         "transverse_rebar_weight_kg":
             transverse_weight,
 
+        "top_longitudinal_rebar_length_m":
+            top_longitudinal_length,
+
+        "top_longitudinal_rebar_weight_kg":
+            top_longitudinal_weight,
+
+        "top_transverse_rebar_length_m":
+            top_transverse_length,
+
+        "top_transverse_rebar_weight_kg":
+            top_transverse_weight,
+
         "top_rebar_length_m":
-            top_length,
+            (
+                top_longitudinal_length
+                + top_transverse_length
+            ),
 
         "top_rebar_weight_kg":
-            top_weight,
+            (
+                top_longitudinal_weight
+                + top_transverse_weight
+            ),
 
         "total_rebar_kg":
             total_rebar,
@@ -491,8 +566,11 @@ def strip_footing(
         "transverse_bars_12m":
             bars_12m(transverse_length),
 
-        "top_bars_12m":
-            bars_12m(top_length),
+        "top_longitudinal_bars_12m":
+            bars_12m(top_longitudinal_length),
+
+        "top_transverse_bars_12m":
+            bars_12m(top_transverse_length),
 
         "rebar_details":
             finalize_rebar_details(rebar_details),
@@ -500,29 +578,38 @@ def strip_footing(
 
 
 # =========================================================
-# پی رادیه
+# پی رادیه - کامل
 # =========================================================
 
 def raft_foundation(
     length_m,
     width_m,
     thickness_m,
+
     lean_length_m,
     lean_width_m,
     lean_thickness_m,
+
     bottom_x_diameter_mm,
     bottom_x_spacing_mm,
+
     bottom_y_diameter_mm,
     bottom_y_spacing_mm,
+
     top_x_diameter_mm=None,
     top_x_spacing_mm=None,
+
     top_y_diameter_mm=None,
     top_y_spacing_mm=None,
+
     cover_mm=50,
     lap_percent=10
 ):
 
-    # بتن رادیه
+    # =====================================================
+    # بتن
+    # =====================================================
+
     raft_concrete = (
         length_m
         * width_m
@@ -540,7 +627,7 @@ def raft_foundation(
     )
 
     # =====================================================
-    # شبکه تحتانی X
+    # تحتانی X
     # =====================================================
 
     bottom_x_count = number_of_bars_in_direction(
@@ -565,7 +652,7 @@ def raft_foundation(
     )
 
     # =====================================================
-    # شبکه تحتانی Y
+    # تحتانی Y
     # =====================================================
 
     bottom_y_count = number_of_bars_in_direction(
@@ -590,7 +677,7 @@ def raft_foundation(
     )
 
     # =====================================================
-    # شبکه فوقانی X
+    # فوقانی X
     # =====================================================
 
     top_x_length = 0
@@ -620,7 +707,7 @@ def raft_foundation(
         )
 
     # =====================================================
-    # شبکه فوقانی Y
+    # فوقانی Y
     # =====================================================
 
     top_y_length = 0
@@ -653,8 +740,6 @@ def raft_foundation(
     # جمع
     # =====================================================
 
-    total_concrete = raft_concrete
-
     total_rebar = (
         bottom_x_weight
         + bottom_y_weight
@@ -670,7 +755,7 @@ def raft_foundation(
     )
 
     # =====================================================
-    # تفکیک بر اساس قطر
+    # تفکیک قطر
     # =====================================================
 
     rebar_details = {}
@@ -709,7 +794,7 @@ def raft_foundation(
             raft_concrete,
 
         "total_concrete_m3":
-            total_concrete,
+            raft_concrete,
 
         "bottom_x_length_m":
             bottom_x_length,
