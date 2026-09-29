@@ -1,5 +1,6 @@
 import os
 import threading
+import math
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -35,6 +36,7 @@ class HealthHandler(BaseHTTPRequestHandler):
             "text/plain; charset=utf-8"
         )
         self.end_headers()
+
         self.wfile.write(
             b"Building Estimation Bot is running!"
         )
@@ -44,10 +46,12 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 
 def run_web_server():
+
     server = HTTPServer(
         ("0.0.0.0", PORT),
         HealthHandler
     )
+
     server.serve_forever()
 
 
@@ -59,7 +63,8 @@ TEXTS = {
 
     "fa": {
 
-        "language": "🌐 زبان را انتخاب کنید:",
+        "language":
+            "🌐 زبان را انتخاب کنید:",
 
         "welcome":
             "🏗️ <b>دستیار برآورد ساختمان</b>\n\n"
@@ -101,7 +106,8 @@ TEXTS = {
 
     "en": {
 
-        "language": "🌐 Choose language:",
+        "language":
+            "🌐 Choose language:",
 
         "welcome":
             "🏗️ <b>Building Estimation Assistant</b>\n\n"
@@ -244,8 +250,6 @@ def twelve_meter_bars(length_m):
     if length_m <= 0:
         return 0
 
-    import math
-
     return math.ceil(length_m / 12)
 
 
@@ -261,9 +265,16 @@ def format_rebar_details(
     if not details:
         return ""
 
+    details = sorted(
+        details,
+        key=lambda x: x["diameter_mm"]
+    )
+
     if lang == "fa":
 
-        message = "🔩 <b>تفکیک میلگرد بر اساس قطر</b>\n\n"
+        message = (
+            "🔩 <b>تفکیک میلگرد بر اساس قطر</b>\n\n"
+        )
 
         for item in details:
 
@@ -283,7 +294,9 @@ def format_rebar_details(
 
     else:
 
-        message = "🔩 <b>Rebar Breakdown by Diameter</b>\n\n"
+        message = (
+            "🔩 <b>Rebar Breakdown by Diameter</b>\n\n"
+        )
 
         for item in details:
 
@@ -360,6 +373,7 @@ async def new_estimate(
     )
 
     context.user_data.clear()
+
     context.user_data["lang"] = lang
 
     await query.edit_message_text(
@@ -391,9 +405,9 @@ async def foundation_selected(
 
     context.user_data["foundation"] = foundation
 
-    # -----------------------------------------------------
+    # =====================================================
     # Isolated
-    # -----------------------------------------------------
+    # =====================================================
 
     if foundation == "isolated":
 
@@ -403,16 +417,17 @@ async def foundation_selected(
             (
                 "🔢 تعداد پی‌ها را وارد کنید:"
                 if lang == "fa"
-                else "🔢 Enter number of footings:"
+                else
+                "🔢 Enter number of footings:"
             ),
             reply_markup=back_button(lang)
         )
 
         return
 
-    # -----------------------------------------------------
+    # =====================================================
     # Strip
-    # -----------------------------------------------------
+    # =====================================================
 
     if foundation == "strip":
 
@@ -422,16 +437,17 @@ async def foundation_selected(
             (
                 "🔢 تعداد نوارها را وارد کنید:"
                 if lang == "fa"
-                else "🔢 Enter number of strips:"
+                else
+                "🔢 Enter number of strips:"
             ),
             reply_markup=back_button(lang)
         )
 
         return
 
-    # -----------------------------------------------------
+    # =====================================================
     # Raft
-    # -----------------------------------------------------
+    # =====================================================
 
     if foundation == "raft":
 
@@ -441,7 +457,8 @@ async def foundation_selected(
             (
                 "📏 طول رادیه را بر حسب متر وارد کنید:"
                 if lang == "fa"
-                else "📏 Enter raft length in meters:"
+                else
+                "📏 Enter raft length in meters:"
             ),
             reply_markup=back_button(lang)
         )
@@ -501,7 +518,8 @@ async def receive_text(
         await update.message.reply_text(
             "📏 طول پی را بر حسب متر وارد کنید:"
             if lang == "fa"
-            else "📏 Enter footing length in meters:"
+            else
+            "📏 Enter footing length in meters:"
         )
 
         return
@@ -514,7 +532,8 @@ async def receive_text(
         await update.message.reply_text(
             "📐 عرض پی را بر حسب متر وارد کنید:"
             if lang == "fa"
-            else "📐 Enter footing width in meters:"
+            else
+            "📐 Enter footing width in meters:"
         )
 
         return
@@ -527,7 +546,8 @@ async def receive_text(
         await update.message.reply_text(
             "📐 ضخامت پی را بر حسب متر وارد کنید:"
             if lang == "fa"
-            else "📐 Enter footing thickness in meters:"
+            else
+            "📐 Enter footing thickness in meters:"
         )
 
         return
@@ -544,7 +564,8 @@ async def receive_text(
         await update.message.reply_text(
             "🔩 قطر میلگرد شبکه پایین را وارد کنید (mm):"
             if lang == "fa"
-            else "🔩 Enter bottom rebar diameter (mm):"
+            else
+            "🔩 Enter bottom rebar diameter (mm):"
         )
 
         return
@@ -557,7 +578,8 @@ async def receive_text(
         await update.message.reply_text(
             "📏 فاصله میلگردهای شبکه پایین را وارد کنید (mm):"
             if lang == "fa"
-            else "📏 Enter bottom rebar spacing (mm):"
+            else
+            "📏 Enter bottom rebar spacing (mm):"
         )
 
         return
@@ -574,7 +596,8 @@ async def receive_text(
         await update.message.reply_text(
             "🔩 قطر میلگرد شبکه بالایی را وارد کنید (mm):"
             if lang == "fa"
-            else "🔩 Enter top rebar diameter (mm):"
+            else
+            "🔩 Enter top rebar diameter (mm):"
         )
 
         return
@@ -587,7 +610,8 @@ async def receive_text(
         await update.message.reply_text(
             "📏 فاصله میلگردهای شبکه بالایی را وارد کنید (mm):"
             if lang == "fa"
-            else "📏 Enter top rebar spacing (mm):"
+            else
+            "📏 Enter top rebar spacing (mm):"
         )
 
         return
@@ -602,11 +626,14 @@ async def receive_text(
         context.user_data["step"] = "iso_pedestal_length"
 
         await update.message.reply_text(
-            "📏 طول پدستال را وارد کنید (m):\n"
-            "اگر پدستال ندارید 0 وارد کنید."
-            if lang == "fa"
-            else "📏 Enter pedestal length (m):\n"
-                 "Enter 0 if there is no pedestal."
+            (
+                "📏 طول پدستال را وارد کنید (m):\n"
+                "اگر پدستال ندارید 0 وارد کنید."
+                if lang == "fa"
+                else
+                "📏 Enter pedestal length (m):\n"
+                "Enter 0 if there is no pedestal."
+            )
         )
 
         return
@@ -619,7 +646,8 @@ async def receive_text(
         await update.message.reply_text(
             "📐 عرض پدستال را وارد کنید (m):"
             if lang == "fa"
-            else "📐 Enter pedestal width (m):"
+            else
+            "📐 Enter pedestal width (m):"
         )
 
         return
@@ -632,13 +660,14 @@ async def receive_text(
         await update.message.reply_text(
             "📐 ارتفاع پدستال را وارد کنید (m):"
             if lang == "fa"
-            else "📐 Enter pedestal height (m):"
+            else
+            "📐 Enter pedestal height (m):"
         )
 
         return
 
     # -----------------------------------------------------
-    # Column starter bars
+    # Starter bars
     # -----------------------------------------------------
 
     if step == "iso_pedestal_height":
@@ -649,7 +678,8 @@ async def receive_text(
         await update.message.reply_text(
             "🔩 قطر میلگردهای انتظار ستون را وارد کنید (mm):"
             if lang == "fa"
-            else "🔩 Enter column starter bar diameter (mm):"
+            else
+            "🔩 Enter column starter bar diameter (mm):"
         )
 
         return
@@ -662,7 +692,8 @@ async def receive_text(
         await update.message.reply_text(
             "🔢 تعداد میلگردهای انتظار هر پی را وارد کنید:"
             if lang == "fa"
-            else "🔢 Enter number of starter bars per footing:"
+            else
+            "🔢 Enter number of starter bars per footing:"
         )
 
         return
@@ -675,7 +706,8 @@ async def receive_text(
         await update.message.reply_text(
             "📏 طول هر میلگرد انتظار را وارد کنید (m):"
             if lang == "fa"
-            else "📏 Enter length of each starter bar (m):"
+            else
+            "📏 Enter length of each starter bar (m):"
         )
 
         return
@@ -691,13 +723,15 @@ async def receive_text(
         try:
 
             result = isolated_footing(
+
                 count=context.user_data["iso_count"],
+
                 length_m=context.user_data["iso_length"],
+
                 width_m=context.user_data["iso_width"],
+
                 thickness_m=context.user_data["iso_thickness"],
 
-                # بتن مگر حذف شده؛ برای سازگاری با calculations
-                # مقدار آن صفر ارسال می‌شود.
                 lean_concrete_length_m=0,
                 lean_concrete_width_m=0,
                 lean_concrete_thickness_m=0,
@@ -784,6 +818,7 @@ async def receive_text(
                     )
 
                     starter_found = True
+
                     break
 
             if not starter_found:
@@ -806,11 +841,8 @@ async def receive_text(
                 key=lambda x: x["diameter_mm"]
             )
 
-            # -------------------------------------------------
-            # Message
-            # -------------------------------------------------
-
             message = (
+
                 TEXTS[lang]["done"]
 
                 + "⬛ <b>پی منفرد</b>\n\n"
@@ -864,7 +896,8 @@ async def receive_text(
         await update.message.reply_text(
             "📏 طول هر نوار را وارد کنید:"
             if lang == "fa"
-            else "📏 Enter strip length:"
+            else
+            "📏 Enter strip length:"
         )
 
         return
@@ -877,7 +910,8 @@ async def receive_text(
         await update.message.reply_text(
             "📐 عرض فونداسیون نواری را وارد کنید:"
             if lang == "fa"
-            else "📐 Enter strip footing width:"
+            else
+            "📐 Enter strip footing width:"
         )
 
         return
@@ -890,14 +924,15 @@ async def receive_text(
         await update.message.reply_text(
             "📐 ضخامت فونداسیون نواری را وارد کنید:"
             if lang == "fa"
-            else "📐 Enter strip footing thickness:"
+            else
+            "📐 Enter strip footing thickness:"
         )
 
         return
 
-    # -----------------------------------------------------
-    # Strip rebar
-    # -----------------------------------------------------
+    # =====================================================
+    # Strip bottom longitudinal
+    # =====================================================
 
     if step == "strip_thickness":
 
@@ -905,9 +940,10 @@ async def receive_text(
         context.user_data["step"] = "strip_long_diameter"
 
         await update.message.reply_text(
-            "🔩 قطر میلگرد طولی را وارد کنید (mm):"
+            "🔩 قطر میلگرد طولی تحتانی را وارد کنید (mm):"
             if lang == "fa"
-            else "🔩 Enter longitudinal rebar diameter (mm):"
+            else
+            "🔩 Enter bottom longitudinal rebar diameter (mm):"
         )
 
         return
@@ -918,12 +954,17 @@ async def receive_text(
         context.user_data["step"] = "strip_long_count"
 
         await update.message.reply_text(
-            "🔢 تعداد میلگردهای طولی را وارد کنید:"
+            "🔢 تعداد میلگردهای طولی تحتانی را وارد کنید:"
             if lang == "fa"
-            else "🔢 Enter number of longitudinal bars:"
+            else
+            "🔢 Enter number of bottom longitudinal bars:"
         )
 
         return
+
+    # =====================================================
+    # Strip bottom transverse
+    # =====================================================
 
     if step == "strip_long_count":
 
@@ -931,9 +972,10 @@ async def receive_text(
         context.user_data["step"] = "strip_trans_diameter"
 
         await update.message.reply_text(
-            "🔩 قطر میلگرد عرضی را وارد کنید (mm):"
+            "🔩 قطر میلگرد عرضی تحتانی را وارد کنید (mm):"
             if lang == "fa"
-            else "🔩 Enter transverse rebar diameter (mm):"
+            else
+            "🔩 Enter bottom transverse rebar diameter (mm):"
         )
 
         return
@@ -944,20 +986,90 @@ async def receive_text(
         context.user_data["step"] = "strip_trans_spacing"
 
         await update.message.reply_text(
-            "📏 فاصله میلگردهای عرضی را وارد کنید (mm):"
+            "📏 فاصله میلگردهای عرضی تحتانی را وارد کنید (mm):"
             if lang == "fa"
-            else "📏 Enter transverse rebar spacing (mm):"
+            else
+            "📏 Enter bottom transverse spacing (mm):"
         )
 
         return
 
+    # =====================================================
+    # Strip top longitudinal
+    # =====================================================
+
     if step == "strip_trans_spacing":
 
         context.user_data["strip_trans_spacing"] = int(value)
+        context.user_data["step"] = "strip_top_long_diameter"
+
+        await update.message.reply_text(
+            "🔩 قطر میلگرد طولی فوقانی را وارد کنید (mm):"
+            if lang == "fa"
+            else
+            "🔩 Enter top longitudinal rebar diameter (mm):"
+        )
+
+        return
+
+    if step == "strip_top_long_diameter":
+
+        context.user_data["strip_top_long_diameter"] = int(value)
+        context.user_data["step"] = "strip_top_long_count"
+
+        await update.message.reply_text(
+            "🔢 تعداد میلگردهای طولی فوقانی را وارد کنید:"
+            if lang == "fa"
+            else
+            "🔢 Enter number of top longitudinal bars:"
+        )
+
+        return
+
+    # =====================================================
+    # Strip top transverse
+    # =====================================================
+
+    if step == "strip_top_long_count":
+
+        context.user_data["strip_top_long_count"] = int(value)
+        context.user_data["step"] = "strip_top_trans_diameter"
+
+        await update.message.reply_text(
+            "🔩 قطر میلگرد عرضی فوقانی را وارد کنید (mm):"
+            if lang == "fa"
+            else
+            "🔩 Enter top transverse rebar diameter (mm):"
+        )
+
+        return
+
+    if step == "strip_top_trans_diameter":
+
+        context.user_data["strip_top_trans_diameter"] = int(value)
+        context.user_data["step"] = "strip_top_trans_spacing"
+
+        await update.message.reply_text(
+            "📏 فاصله میلگردهای عرضی فوقانی را وارد کنید (mm):"
+            if lang == "fa"
+            else
+            "📏 Enter top transverse spacing (mm):"
+        )
+
+        return
+
+    # =====================================================
+    # Final strip calculation
+    # =====================================================
+
+    if step == "strip_top_trans_spacing":
+
+        context.user_data["strip_top_trans_spacing"] = int(value)
 
         try:
 
             result = strip_footing(
+
                 strip_count=
                     context.user_data["strip_count"],
 
@@ -975,6 +1087,7 @@ async def receive_text(
                 lean_width_m=0,
                 lean_thickness_m=0,
 
+                # تحتانی طولی
                 longitudinal_diameter_mm=
                     context.user_data[
                         "strip_long_diameter"
@@ -985,6 +1098,7 @@ async def receive_text(
                         "strip_long_count"
                     ],
 
+                # تحتانی عرضی
                 transverse_diameter_mm=
                     context.user_data[
                         "strip_trans_diameter"
@@ -994,15 +1108,42 @@ async def receive_text(
                     context.user_data[
                         "strip_trans_spacing"
                     ],
+
+                # فوقانی طولی
+                top_longitudinal_diameter_mm=
+                    context.user_data[
+                        "strip_top_long_diameter"
+                    ],
+
+                top_longitudinal_count=
+                    context.user_data[
+                        "strip_top_long_count"
+                    ],
+
+                # فوقانی عرضی
+                top_transverse_diameter_mm=
+                    context.user_data[
+                        "strip_top_trans_diameter"
+                    ],
+
+                top_transverse_spacing_mm=
+                    context.user_data[
+                        "strip_top_trans_spacing"
+                    ],
             )
 
             message = (
+
                 TEXTS[lang]["done"]
 
                 + "▬ <b>پی نواری</b>\n\n"
 
                 + f"🧱 بتن فونداسیون: "
                 f"{result['footing_concrete_m3']:.2f} m³\n\n"
+
+                + "🔻 <b>آرماتوربندی</b>\n"
+                + "تحتانی طولی + تحتانی عرضی\n"
+                + "فوقانی طولی + فوقانی عرضی\n\n"
 
                 + format_rebar_details(
                     result.get(
@@ -1047,7 +1188,8 @@ async def receive_text(
         await update.message.reply_text(
             "📐 عرض رادیه را وارد کنید:"
             if lang == "fa"
-            else "📐 Enter raft width:"
+            else
+            "📐 Enter raft width:"
         )
 
         return
@@ -1060,14 +1202,15 @@ async def receive_text(
         await update.message.reply_text(
             "📐 ضخامت رادیه را وارد کنید:"
             if lang == "fa"
-            else "📐 Enter raft thickness:"
+            else
+            "📐 Enter raft thickness:"
         )
 
         return
 
-    # -----------------------------------------------------
-    # Raft rebar
-    # -----------------------------------------------------
+    # =====================================================
+    # Raft bottom X
+    # =====================================================
 
     if step == "raft_thickness":
 
@@ -1077,7 +1220,8 @@ async def receive_text(
         await update.message.reply_text(
             "🔩 قطر میلگرد X پایین را وارد کنید (mm):"
             if lang == "fa"
-            else "🔩 Enter bottom X rebar diameter:"
+            else
+            "🔩 Enter bottom X rebar diameter (mm):"
         )
 
         return
@@ -1090,10 +1234,15 @@ async def receive_text(
         await update.message.reply_text(
             "📏 فاصله میلگرد X پایین را وارد کنید (mm):"
             if lang == "fa"
-            else "📏 Enter bottom X spacing:"
+            else
+            "📏 Enter bottom X spacing (mm):"
         )
 
         return
+
+    # =====================================================
+    # Raft bottom Y
+    # =====================================================
 
     if step == "raft_bottom_x_spacing":
 
@@ -1103,7 +1252,8 @@ async def receive_text(
         await update.message.reply_text(
             "🔩 قطر میلگرد Y پایین را وارد کنید (mm):"
             if lang == "fa"
-            else "🔩 Enter bottom Y rebar diameter:"
+            else
+            "🔩 Enter bottom Y rebar diameter (mm):"
         )
 
         return
@@ -1116,18 +1266,88 @@ async def receive_text(
         await update.message.reply_text(
             "📏 فاصله میلگرد Y پایین را وارد کنید (mm):"
             if lang == "fa"
-            else "📏 Enter bottom Y spacing:"
+            else
+            "📏 Enter bottom Y spacing (mm):"
         )
 
         return
 
+    # =====================================================
+    # Raft top X
+    # =====================================================
+
     if step == "raft_bottom_y_spacing":
 
         context.user_data["raft_bottom_y_spacing"] = int(value)
+        context.user_data["step"] = "raft_top_x_diameter"
+
+        await update.message.reply_text(
+            "🔩 قطر میلگرد X بالا را وارد کنید (mm):"
+            if lang == "fa"
+            else
+            "🔩 Enter top X rebar diameter (mm):"
+        )
+
+        return
+
+    if step == "raft_top_x_diameter":
+
+        context.user_data["raft_top_x_diameter"] = int(value)
+        context.user_data["step"] = "raft_top_x_spacing"
+
+        await update.message.reply_text(
+            "📏 فاصله میلگرد X بالا را وارد کنید (mm):"
+            if lang == "fa"
+            else
+            "📏 Enter top X spacing (mm):"
+        )
+
+        return
+
+    # =====================================================
+    # Raft top Y
+    # =====================================================
+
+    if step == "raft_top_x_spacing":
+
+        context.user_data["raft_top_x_spacing"] = int(value)
+        context.user_data["step"] = "raft_top_y_diameter"
+
+        await update.message.reply_text(
+            "🔩 قطر میلگرد Y بالا را وارد کنید (mm):"
+            if lang == "fa"
+            else
+            "🔩 Enter top Y rebar diameter (mm):"
+        )
+
+        return
+
+    if step == "raft_top_y_diameter":
+
+        context.user_data["raft_top_y_diameter"] = int(value)
+        context.user_data["step"] = "raft_top_y_spacing"
+
+        await update.message.reply_text(
+            "📏 فاصله میلگرد Y بالا را وارد کنید (mm):"
+            if lang == "fa"
+            else
+            "📏 Enter top Y spacing (mm):"
+        )
+
+        return
+
+    # =====================================================
+    # Final raft calculation
+    # =====================================================
+
+    if step == "raft_top_y_spacing":
+
+        context.user_data["raft_top_y_spacing"] = int(value)
 
         try:
 
             result = raft_foundation(
+
                 length_m=
                     context.user_data["raft_length"],
 
@@ -1142,6 +1362,7 @@ async def receive_text(
                 lean_width_m=0,
                 lean_thickness_m=0,
 
+                # تحتانی X
                 bottom_x_diameter_mm=
                     context.user_data[
                         "raft_bottom_x_diameter"
@@ -1152,6 +1373,7 @@ async def receive_text(
                         "raft_bottom_x_spacing"
                     ],
 
+                # تحتانی Y
                 bottom_y_diameter_mm=
                     context.user_data[
                         "raft_bottom_y_diameter"
@@ -1161,15 +1383,42 @@ async def receive_text(
                     context.user_data[
                         "raft_bottom_y_spacing"
                     ],
+
+                # فوقانی X
+                top_x_diameter_mm=
+                    context.user_data[
+                        "raft_top_x_diameter"
+                    ],
+
+                top_x_spacing_mm=
+                    context.user_data[
+                        "raft_top_x_spacing"
+                    ],
+
+                # فوقانی Y
+                top_y_diameter_mm=
+                    context.user_data[
+                        "raft_top_y_diameter"
+                    ],
+
+                top_y_spacing_mm=
+                    context.user_data[
+                        "raft_top_y_spacing"
+                    ],
             )
 
             message = (
+
                 TEXTS[lang]["done"]
 
                 + "▰ <b>پی رادیه</b>\n\n"
 
                 + f"🧱 بتن رادیه: "
                 f"{result['raft_concrete_m3']:.2f} m³\n\n"
+
+                + "🔻 <b>آرماتوربندی</b>\n"
+                + "تحتانی X + تحتانی Y\n"
+                + "فوقانی X + فوقانی Y\n\n"
 
                 + format_rebar_details(
                     result.get(
