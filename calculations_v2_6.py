@@ -287,7 +287,10 @@ def isolated_footing(count, length_m, width_m, thickness_m,
         nx=number_of_bars_in_direction(W,top_spacing_mm); ny=number_of_bars_in_direction(L,top_spacing_mm)
         add_rebar_detail(details,top_diameter_mm,[L]*(nx*n),'پی منفرد - شبکه بالا X',lap_percent)
         add_rebar_detail(details,top_diameter_mm,[W]*(ny*n),'پی منفرد - شبکه بالا Y',lap_percent)
-    return _member_result(lean+footing+pedestal,details,lean_concrete_m3=lean,footing_concrete_m3=footing,pedestal_concrete_m3=pedestal,count=n)
+    result = _member_result(lean+footing+pedestal,details,lean_concrete_m3=lean,footing_concrete_m3=footing,pedestal_concrete_m3=pedestal,count=n)
+    result['bottom_rebar_weight_kg'] = sum(x['weight_kg'] for x in result['rebar_details'] if 'پایین' in x.get('description',''))
+    result['top_rebar_weight_kg'] = sum(x['weight_kg'] for x in result['rebar_details'] if 'بالا' in x.get('description',''))
+    return result
 
 
 def strip_footing(strip_count, strip_length_m, footing_width_m, footing_thickness_m,
@@ -297,13 +300,14 @@ def strip_footing(strip_count, strip_length_m, footing_width_m, footing_thicknes
                   top_transverse_diameter_mm=None, top_transverse_spacing_mm=None,
                   cover_mm=50, lap_percent=0):
     n=_positive_int(strip_count,"Strip count"); Lm=_positive(strip_length_m,"Strip length"); Wm=_positive(footing_width_m,"Footing width"); Tm=_positive(footing_thickness_m,"Footing thickness")
+    lean = n * _nonnegative(lean_length_m, 'Lean length') * _nonnegative(lean_width_m, 'Lean width') * _nonnegative(lean_thickness_m, 'Lean thickness')
     concrete=n*Lm*Wm*Tm; details=[]; L=usable_length(Lm,cover_mm); W=usable_length(Wm,cover_mm)
     add_rebar_detail(details,longitudinal_diameter_mm,[L]*(_positive_int(longitudinal_count,"Longitudinal count")*n),'پی نواری - طولی پایین',lap_percent)
     nc=number_of_bars_in_direction(L,transverse_spacing_mm); add_rebar_detail(details,transverse_diameter_mm,[W]*(nc*n),'پی نواری - عرضی پایین',lap_percent)
     if top_longitudinal_diameter_mm and top_longitudinal_count: add_rebar_detail(details,top_longitudinal_diameter_mm,[L]*(int(top_longitudinal_count)*n),'پی نواری - طولی بالا',lap_percent)
     if top_transverse_diameter_mm and top_transverse_spacing_mm:
         nc=number_of_bars_in_direction(L,top_transverse_spacing_mm); add_rebar_detail(details,top_transverse_diameter_mm,[W]*(nc*n),'پی نواری - عرضی بالا',lap_percent)
-    return _member_result(concrete,details,count=n)
+    return _member_result(lean+concrete,details,lean_concrete_m3=lean,footing_concrete_m3=concrete,count=n)
 
 
 def raft_foundation(length_m,width_m,thickness_m,lean_length_m,lean_width_m,lean_thickness_m,
@@ -311,6 +315,7 @@ def raft_foundation(length_m,width_m,thickness_m,lean_length_m,lean_width_m,lean
                     top_x_diameter_mm=None,top_x_spacing_mm=None,top_y_diameter_mm=None,top_y_spacing_mm=None,
                     cover_mm=50,lap_percent=0):
     Lm=_positive(length_m,"Raft length"); Wm=_positive(width_m,"Raft width"); Tm=_positive(thickness_m,"Raft thickness")
+    lean = _nonnegative(lean_length_m, 'Lean length') * _nonnegative(lean_width_m, 'Lean width') * _nonnegative(lean_thickness_m, 'Lean thickness')
     concrete=Lm*Wm*Tm; details=[]; L=usable_length(Lm,cover_mm); W=usable_length(Wm,cover_mm)
     nx=number_of_bars_in_direction(W,bottom_x_spacing_mm); ny=number_of_bars_in_direction(L,bottom_y_spacing_mm)
     add_rebar_detail(details,bottom_x_diameter_mm,[L]*nx,'رادیه - شبکه پایین X',lap_percent); add_rebar_detail(details,bottom_y_diameter_mm,[W]*ny,'رادیه - شبکه پایین Y',lap_percent)
@@ -318,7 +323,7 @@ def raft_foundation(length_m,width_m,thickness_m,lean_length_m,lean_width_m,lean
         nx=number_of_bars_in_direction(W,top_x_spacing_mm); add_rebar_detail(details,top_x_diameter_mm,[L]*nx,'رادیه - شبکه بالا X',lap_percent)
     if top_y_diameter_mm and top_y_spacing_mm:
         ny=number_of_bars_in_direction(L,top_y_spacing_mm); add_rebar_detail(details,top_y_diameter_mm,[W]*ny,'رادیه - شبکه بالا Y',lap_percent)
-    return _member_result(concrete,details,lean_concrete_m3=0,raft_concrete_m3=concrete)
+    return _member_result(concrete+lean,details,lean_concrete_m3=lean,raft_concrete_m3=concrete)
 
 
 def column_rectangular(count,width_m,depth_m,height_m,long_dia,long_count,stirrup_dia,stirrup_spacing,cover_mm=40):
