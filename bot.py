@@ -532,48 +532,13 @@ async def receive_text(
 
         return
 
+    # -----------------------------------------------------
+    # Bottom Rebar
+    # -----------------------------------------------------
+
     if step == "iso_thickness":
 
         context.user_data["iso_thickness"] = value
-        context.user_data["step"] = "iso_mager_length"
-
-        await update.message.reply_text(
-            "📏 طول بتن مگر را وارد کنید:"
-            if lang == "fa"
-            else "📏 Enter lean concrete length:"
-        )
-
-        return
-
-    if step == "iso_mager_length":
-
-        context.user_data["iso_mager_length"] = value
-        context.user_data["step"] = "iso_mager_width"
-
-        await update.message.reply_text(
-            "📐 عرض بتن مگر را وارد کنید:"
-            if lang == "fa"
-            else "📐 Enter lean concrete width:"
-        )
-
-        return
-
-    if step == "iso_mager_width":
-
-        context.user_data["iso_mager_width"] = value
-        context.user_data["step"] = "iso_mager_thickness"
-
-        await update.message.reply_text(
-            "📐 ضخامت بتن مگر را وارد کنید:"
-            if lang == "fa"
-            else "📐 Enter lean concrete thickness:"
-        )
-
-        return
-
-    if step == "iso_mager_thickness":
-
-        context.user_data["iso_mager_thickness"] = value
         context.user_data["step"] = "iso_bottom_diameter"
 
         await update.message.reply_text(
@@ -596,6 +561,10 @@ async def receive_text(
         )
 
         return
+
+    # -----------------------------------------------------
+    # Top Rebar
+    # -----------------------------------------------------
 
     if step == "iso_bottom_spacing":
 
@@ -727,14 +696,11 @@ async def receive_text(
                 width_m=context.user_data["iso_width"],
                 thickness_m=context.user_data["iso_thickness"],
 
-                lean_concrete_length_m=
-                    context.user_data["iso_mager_length"],
-
-                lean_concrete_width_m=
-                    context.user_data["iso_mager_width"],
-
-                lean_concrete_thickness_m=
-                    context.user_data["iso_mager_thickness"],
+                # بتن مگر حذف شده؛ برای سازگاری با calculations
+                # مقدار آن صفر ارسال می‌شود.
+                lean_concrete_length_m=0,
+                lean_concrete_width_m=0,
+                lean_concrete_thickness_m=0,
 
                 bottom_diameter_mm=
                     context.user_data["iso_bottom_diameter"],
@@ -929,48 +895,13 @@ async def receive_text(
 
         return
 
+    # -----------------------------------------------------
+    # Strip rebar
+    # -----------------------------------------------------
+
     if step == "strip_thickness":
 
         context.user_data["strip_thickness"] = value
-        context.user_data["step"] = "strip_lean_length"
-
-        await update.message.reply_text(
-            "📏 طول بتن مگر را وارد کنید:"
-            if lang == "fa"
-            else "📏 Enter lean concrete length:"
-        )
-
-        return
-
-    if step == "strip_lean_length":
-
-        context.user_data["strip_lean_length"] = value
-        context.user_data["step"] = "strip_lean_width"
-
-        await update.message.reply_text(
-            "📐 عرض بتن مگر را وارد کنید:"
-            if lang == "fa"
-            else "📐 Enter lean concrete width:"
-        )
-
-        return
-
-    if step == "strip_lean_width":
-
-        context.user_data["strip_lean_width"] = value
-        context.user_data["step"] = "strip_lean_thickness"
-
-        await update.message.reply_text(
-            "📐 ضخامت بتن مگر را وارد کنید:"
-            if lang == "fa"
-            else "📐 Enter lean concrete thickness:"
-        )
-
-        return
-
-    if step == "strip_lean_thickness":
-
-        context.user_data["strip_lean_thickness"] = value
         context.user_data["step"] = "strip_long_diameter"
 
         await update.message.reply_text(
@@ -1039,14 +970,10 @@ async def receive_text(
                 footing_thickness_m=
                     context.user_data["strip_thickness"],
 
-                lean_length_m=
-                    context.user_data["strip_lean_length"],
-
-                lean_width_m=
-                    context.user_data["strip_lean_width"],
-
-                lean_thickness_m=
-                    context.user_data["strip_lean_thickness"],
+                # بتن مگر حذف شده
+                lean_length_m=0,
+                lean_width_m=0,
+                lean_thickness_m=0,
 
                 longitudinal_diameter_mm=
                     context.user_data[
@@ -1138,48 +1065,13 @@ async def receive_text(
 
         return
 
+    # -----------------------------------------------------
+    # Raft rebar
+    # -----------------------------------------------------
+
     if step == "raft_thickness":
 
         context.user_data["raft_thickness"] = value
-        context.user_data["step"] = "raft_lean_length"
-
-        await update.message.reply_text(
-            "📏 طول بتن مگر را وارد کنید:"
-            if lang == "fa"
-            else "📏 Enter lean concrete length:"
-        )
-
-        return
-
-    if step == "raft_lean_length":
-
-        context.user_data["raft_lean_length"] = value
-        context.user_data["step"] = "raft_lean_width"
-
-        await update.message.reply_text(
-            "📐 عرض بتن مگر را وارد کنید:"
-            if lang == "fa"
-            else "📐 Enter lean concrete width:"
-        )
-
-        return
-
-    if step == "raft_lean_width":
-
-        context.user_data["raft_lean_width"] = value
-        context.user_data["step"] = "raft_lean_thickness"
-
-        await update.message.reply_text(
-            "📐 ضخامت بتن مگر را وارد کنید:"
-            if lang == "fa"
-            else "📐 Enter lean concrete thickness:"
-        )
-
-        return
-
-    if step == "raft_lean_thickness":
-
-        context.user_data["raft_lean_thickness"] = value
         context.user_data["step"] = "raft_bottom_x_diameter"
 
         await update.message.reply_text(
@@ -1245,14 +1137,10 @@ async def receive_text(
                 thickness_m=
                     context.user_data["raft_thickness"],
 
-                lean_length_m=
-                    context.user_data["raft_lean_length"],
-
-                lean_width_m=
-                    context.user_data["raft_lean_width"],
-
-                lean_thickness_m=
-                    context.user_data["raft_lean_thickness"],
+                # بتن مگر حذف شده
+                lean_length_m=0,
+                lean_width_m=0,
+                lean_thickness_m=0,
 
                 bottom_x_diameter_mm=
                     context.user_data[
