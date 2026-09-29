@@ -3,7 +3,11 @@
 
 import os
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -27,11 +31,9 @@ from calculations import (
 )
 
 
-# ============================================================
-# تنظیمات
-# ============================================================
-
-TOKEN = os.getenv("BOT_TOKEN")
+# =========================================================
+# SETTINGS
+# =========================================================
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -40,1894 +42,1515 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-
-# ============================================================
-# ابزارهای عمومی
-# ============================================================
-
-def main_menu():
-    keyboard = [
-        [
-            InlineKeyboardButton("🧱 فونداسیون", callback_data="foundation"),
-            InlineKeyboardButton("🏛️ ستون‌ها", callback_data="columns"),
-        ],
-        [
-            InlineKeyboardButton("📐 تیرها", callback_data="beams"),
-            InlineKeyboardButton("🏠 سقف‌ها", callback_data="roofs"),
-        ],
-        [
-            InlineKeyboardButton("🪜 راه‌پله", callback_data="stairs"),
-            InlineKeyboardButton("🔗 شناژ و کلاف", callback_data="ties"),
-        ],
-        [
-            InlineKeyboardButton("🧱 دیوارها", callback_data="walls"),
-        ],
-        [
-            InlineKeyboardButton("📊 خلاصه پروژه", callback_data="summary"),
-        ],
-        [
-            InlineKeyboardButton("⚙️ تنظیمات", callback_data="settings"),
-            InlineKeyboardButton("ℹ️ راهنما", callback_data="help"),
-        ],
-    ]
-
-    return InlineKeyboardMarkup(keyboard)
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+PORT = int(os.environ.get("PORT", "10000"))
+RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL")
 
 
-def back_button(callback_data="home"):
-    return InlineKeyboardMarkup(
-        [[
-            InlineKeyboardButton("🔙 بازگشت", callback_data=callback_data)
-        ]]
+# =========================================================
+# LANGUAGE
+# =========================================================
+
+TEXT = {
+    "fa": {
+        "home": "🏗️ اسکلت بتنی",
+        "foundation": "🧱 فونداسیون",
+        "columns": "🏛️ ستون‌ها",
+        "beams": "📐 تیرها",
+        "roofs": "🏠 سقف‌ها",
+        "stairs": "🪜 راه‌پله",
+        "ties": "🔗 شناژ و کلاف",
+        "walls": "🧱 دیوارها",
+        "summary": "📊 خلاصه پروژه",
+        "settings": "⚙️ تنظیمات",
+        "help": "ℹ️ راهنما",
+        "back": "🔙 بازگشت",
+        "cancel": "❌ لغو",
+        "rebar": "🔩 جزئیات میلگرد",
+        "cutlist": "✂️ Cut List",
+        "language": "🌐 زبان",
+        "select_language": "زبان را انتخاب کنید:",
+        "invalid": "❌ مقدار واردشده معتبر نیست. دوباره وارد کنید.",
+        "cancelled": "❌ عملیات لغو شد.",
+        "unknown": "دستور یا مقدار نامعتبر است.",
+        "start": "به ربات برآورد اسکلت بتنی خوش آمدید.",
+    },
+    "en": {
+        "home": "🏗️ Concrete Structure",
+        "foundation": "🧱 Foundation",
+        "columns": "🏛️ Columns",
+        "beams": "📐 Beams",
+        "roofs": "🏠 Roofs",
+        "stairs": "🪜 Stairs",
+        "ties": "🔗 Tie Beams",
+        "walls": "🧱 Walls",
+        "summary": "📊 Project Summary",
+        "settings": "⚙️ Settings",
+        "help": "ℹ️ Help",
+        "back": "🔙 Back",
+        "cancel": "❌ Cancel",
+        "rebar": "🔩 Rebar Details",
+        "cutlist": "✂️ Cut List",
+        "language": "🌐 Language",
+        "select_language": "Select language:",
+        "invalid": "❌ Invalid value. Please try again.",
+        "cancelled": "❌ Operation cancelled.",
+        "unknown": "Unknown command or value.",
+        "start": "Welcome to the Concrete Structure Estimation Bot.",
+    },
+}
+
+
+# =========================================================
+# COMMON HELPERS
+# =========================================================
+
+def lang(context):
+    return context.user_data.get("lang", "fa")
+
+
+def t(context, key):
+    return TEXT[lang(context)].get(key, key)
+
+
+def set_state(context, state):
+    context.user_data["state"] = state
+
+
+def get_state(context):
+    return context.user_data.get("state")
+
+
+def clear_state(context):
+    context.user_data.pop("state", None)
+    context.user_data.pop("data", None)
+
+
+def get_data(context):
+    if "data" not in context.user_data:
+        context.user_data["data"] = {}
+    return context.user_data["data"]
+
+
+def menu_button(text, callback):
+    return InlineKeyboardButton(text, callback_data=callback)
+
+
+def home_keyboard(context):
+    return InlineKeyboardMarkup([
+        [
+            menu_button(t(context, "foundation"), "foundation"),
+            menu_button(t(context, "columns"), "columns"),
+        ],
+        [
+            menu_button(t(context, "beams"), "beams"),
+            menu_button(t(context, "roofs"), "roofs"),
+        ],
+        [
+            menu_button(t(context, "stairs"), "stairs"),
+            menu_button(t(context, "ties"), "ties"),
+        ],
+        [
+            menu_button(t(context, "walls"), "walls"),
+        ],
+        [
+            menu_button(t(context, "summary"), "summary"),
+            menu_button(t(context, "settings"), "settings"),
+        ],
+        [
+            menu_button(t(context, "help"), "help"),
+        ],
+    ])
+
+
+async def show_home(update, context):
+    clear_state(context)
+
+    text = (
+        f"{t(context, 'home')}\n\n"
+        "🧱 فونداسیون    🏛️ ستون‌ها\n"
+        "📐 تیرها        🏠 سقف‌ها\n"
+        "🪜 راه‌پله      🔗 شناژ و کلاف\n"
+        "🧱 دیوارها\n\n"
+        "📊 خلاصه پروژه\n"
+        "⚙️ تنظیمات      ℹ️ راهنما"
     )
 
-
-def clear_input(context):
-    context.user_data.pop("step", None)
-
-
-def set_step(context, step):
-    context.user_data["step"] = step
-
-
-def get_step(context):
-    return context.user_data.get("step")
-
-
-def start_message():
-    return (
-        "🏗️ <b>محاسبه‌گر اسکلت بتنی</b>\n\n"
-        "نوع عضو سازه‌ای را انتخاب کنید:"
-    )
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            text=text,
+            reply_markup=home_keyboard(context),
+        )
+    else:
+        await update.message.reply_text(
+            text=text,
+            reply_markup=home_keyboard(context),
+        )
 
 
-# ============================================================
-# /start
-# ============================================================
+def back_keyboard(callback):
+    return InlineKeyboardMarkup([
+        [menu_button("🔙 بازگشت", callback)]
+    ])
+
+
+# =========================================================
+# START
+# =========================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    context.user_data.clear()
-
-    await update.message.reply_text(
-        start_message(),
-        parse_mode="HTML",
-        reply_markup=main_menu(),
-    )
-
-
-# ============================================================
-# منوی اصلی
-# ============================================================
-
-async def show_home(query, context):
-
-    clear_input(context)
-
-    await query.edit_message_text(
-        start_message(),
-        parse_mode="HTML",
-        reply_markup=main_menu(),
-    )
-
-
-# ============================================================
-# فونداسیون
-# ============================================================
-
-async def foundation_menu(query, context):
-
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "🧱 پی منفرد",
-                callback_data="foundation_isolated",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🧱 پی نواری",
-                callback_data="foundation_strip",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🧱 پی گسترده / رادیه",
-                callback_data="foundation_raft",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🔙 بازگشت",
-                callback_data="home",
-            )
-        ],
-    ]
-
-    await query.edit_message_text(
-        "🧱 <b>فونداسیون</b>\n\n"
-        "نوع فونداسیون را انتخاب کنید:",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
-
-
-# ============================================================
-# پی منفرد - شروع
-# ============================================================
-
-async def isolated_start(query, context):
-
-    context.user_data.clear()
-    context.user_data["section"] = "isolated"
-    context.user_data["step"] = "count"
-
-    await query.edit_message_text(
-        "🧱 <b>پی منفرد</b>\n\n"
-        "تعداد پی را وارد کنید:",
-        parse_mode="HTML",
-        reply_markup=back_button("foundation"),
-    )
-
-
-async def isolated_process(update, context, text):
-
-    step = get_step(context)
-
-    try:
-
-        if step == "count":
-
-            context.user_data["count"] = int(text)
-            context.user_data["step"] = "length"
-
-            await update.message.reply_text(
-                "طول پی را بر حسب متر وارد کنید:"
-            )
-            return
-
-        if step == "length":
-
-            context.user_data["length"] = float(text)
-            context.user_data["step"] = "width"
-
-            await update.message.reply_text(
-                "عرض پی را بر حسب متر وارد کنید:"
-            )
-            return
-
-        if step == "width":
-
-            context.user_data["width"] = float(text)
-            context.user_data["step"] = "thickness"
-
-            await update.message.reply_text(
-                "ضخامت پی را بر حسب متر وارد کنید:"
-            )
-            return
-
-        if step == "thickness":
-
-            context.user_data["thickness"] = float(text)
-            context.user_data["step"] = "lean_length"
-
-            await update.message.reply_text(
-                "طول بتن مگر را وارد کنید:"
-            )
-            return
-
-        if step == "lean_length":
-
-            context.user_data["lean_length"] = float(text)
-            context.user_data["step"] = "lean_width"
-
-            await update.message.reply_text(
-                "عرض بتن مگر را وارد کنید:"
-            )
-            return
-
-        if step == "lean_width":
-
-            context.user_data["lean_width"] = float(text)
-            context.user_data["step"] = "lean_thickness"
-
-            await update.message.reply_text(
-                "ضخامت بتن مگر را بر حسب متر وارد کنید:"
-            )
-            return
-
-        if step == "lean_thickness":
-
-            context.user_data["lean_thickness"] = float(text)
-            context.user_data["step"] = "bottom_diameter"
-
-            await update.message.reply_text(
-                "قطر میلگرد پایین را وارد کنید. مثال: 16"
-            )
-            return
-
-        if step == "bottom_diameter":
-
-            context.user_data["bottom_diameter"] = int(text)
-            context.user_data["step"] = "bottom_spacing"
-
-            await update.message.reply_text(
-                "فاصله میلگرد پایین را بر حسب میلی‌متر وارد کنید. مثال: 150"
-            )
-            return
-
-        if step == "bottom_spacing":
-
-            context.user_data["bottom_spacing"] = float(text)
-            context.user_data["step"] = "top_diameter"
-
-            await update.message.reply_text(
-                "قطر میلگرد بالایی را وارد کنید.\n"
-                "اگر میلگرد بالایی ندارید: 0"
-            )
-            return
-
-        if step == "top_diameter":
-
-            context.user_data["top_diameter"] = int(text)
-            context.user_data["step"] = "top_spacing"
-
-            await update.message.reply_text(
-                "فاصله میلگرد بالایی را وارد کنید.\n"
-                "اگر میلگرد بالایی ندارید: 0"
-            )
-            return
-
-        if step == "top_spacing":
-
-            context.user_data["top_spacing"] = float(text)
-            context.user_data["step"] = "pedestal_length"
-
-            await update.message.reply_text(
-                "طول پدستال / ستونک را وارد کنید.\n"
-                "اگر ندارد: 0"
-            )
-            return
-
-        if step == "pedestal_length":
-
-            context.user_data["pedestal_length"] = float(text)
-            context.user_data["step"] = "pedestal_width"
-
-            await update.message.reply_text(
-                "عرض پدستال را وارد کنید.\n"
-                "اگر ندارد: 0"
-            )
-            return
-
-        if step == "pedestal_width":
-
-            context.user_data["pedestal_width"] = float(text)
-            context.user_data["step"] = "pedestal_height"
-
-            await update.message.reply_text(
-                "ارتفاع پدستال را وارد کنید.\n"
-                "اگر ندارد: 0"
-            )
-            return
-
-        if step == "pedestal_height":
-
-            context.user_data["pedestal_height"] = float(text)
-
-            result = isolated_footing(
-                count=context.user_data["count"],
-                length_m=context.user_data["length"],
-                width_m=context.user_data["width"],
-                thickness_m=context.user_data["thickness"],
-                lean_concrete_length_m=context.user_data["lean_length"],
-                lean_concrete_width_m=context.user_data["lean_width"],
-                lean_concrete_thickness_m=context.user_data["lean_thickness"],
-                bottom_diameter_mm=context.user_data["bottom_diameter"],
-                bottom_spacing_mm=context.user_data["bottom_spacing"],
-                top_diameter_mm=(
-                    context.user_data["top_diameter"]
-                    if context.user_data["top_diameter"] > 0
-                    else None
-                ),
-                top_spacing_mm=(
-                    context.user_data["top_spacing"]
-                    if context.user_data["top_spacing"] > 0
-                    else None
-                ),
-                pedestal_length_m=context.user_data["pedestal_length"],
-                pedestal_width_m=context.user_data["pedestal_width"],
-                pedestal_height_m=context.user_data["pedestal_height"],
-            )
-
-            context.user_data["last_result"] = result
-            context.user_data["step"] = None
-
-            await show_isolated_result(update, context)
-            return
-
-    except Exception as e:
-
-        logger.exception("Calculation error")
+    clear_state(context)
+
+    if "lang" not in context.user_data:
+        keyboard = InlineKeyboardMarkup([
+            [
+                menu_button("🇮🇷 فارسی", "lang_fa"),
+                menu_button("🇬🇧 English", "lang_en"),
+            ]
+        ])
 
         await update.message.reply_text(
-            f"❌ خطا در ورودی:\n{e}\n\n"
-            "لطفاً مقدار را دوباره وارد کنید."
+            "زبان / Language:",
+            reply_markup=keyboard,
+        )
+        return
+
+    await show_home(update, context)
+
+
+async def cb_language(update, context):
+    query = update.callback_query
+    await query.answer()
+
+    selected = query.data.split("_", 1)[1]
+    context.user_data["lang"] = selected
+
+    await show_home(update, context)
+
+
+# =========================================================
+# FOUNDATION MENU
+# =========================================================
+
+async def foundation_menu(update, context):
+    clear_state(context)
+
+    keyboard = InlineKeyboardMarkup([
+        [menu_button("پی منفرد", "foundation_isolated")],
+        [menu_button("پی نواری", "foundation_strip")],
+        [menu_button("پی گسترده / رادیه", "foundation_raft")],
+        [menu_button("🔙 بازگشت", "home")],
+    ])
+
+    await update.callback_query.edit_message_text(
+        "🧱 فونداسیون\n\nنوع فونداسیون را انتخاب کنید:",
+        reply_markup=keyboard,
+    )
+
+
+# =========================================================
+# ISOLATED FOOTING
+# =========================================================
+
+ISOLATED_FIELDS = [
+    ("count", "تعداد پی"),
+    ("length", "طول پی (m)"),
+    ("width", "عرض پی (m)"),
+    ("thickness", "ضخامت پی (m)"),
+    ("lean_length", "طول بتن مگر (m)"),
+    ("lean_width", "عرض بتن مگر (m)"),
+    ("lean_thickness", "ضخامت بتن مگر (m)"),
+    ("bottom_diameter", "قطر میلگرد پایین (mm)"),
+    ("bottom_spacing", "فاصله میلگرد پایین (mm)"),
+    ("top_diameter", "قطر میلگرد بالا (mm) - اگر ندارد 0"),
+    ("top_spacing", "فاصله میلگرد بالا (mm) - اگر ندارد 0"),
+    ("cover", "کاور (mm)"),
+    ("lap", "درصد اورلپ"),
+    ("pedestal_length", "طول پدستال (m)"),
+    ("pedestal_width", "عرض پدستال (m)"),
+    ("pedestal_height", "ارتفاع پدستال (m)"),
+]
+
+
+async def start_isolated(update, context):
+    clear_state(context)
+
+    data = get_data(context)
+    data["index"] = 0
+    data["fields"] = {}
+    data["mode"] = "isolated"
+
+    set_state(context, "isolated")
+
+    await update.callback_query.edit_message_text(
+        "🧱 پی منفرد\n\n"
+        "اطلاعات را مرحله‌به‌مرحله وارد کنید.\n\n"
+        f"تعداد پی را وارد کنید:"
+    )
+
+
+async def isolated_receive(update, context):
+    data = get_data(context)
+
+    index = data.get("index", 0)
+
+    if index >= len(ISOLATED_FIELDS):
+        return
+
+    key, title = ISOLATED_FIELDS[index]
+
+    try:
+        value = float(update.message.text.replace(",", "."))
+    except ValueError:
+        await update.message.reply_text(t(context, "invalid"))
+        return
+
+    data["fields"][key] = value
+    data["index"] = index + 1
+
+    if data["index"] < len(ISOLATED_FIELDS):
+        _, next_title = ISOLATED_FIELDS[data["index"]]
+
+        await update.message.reply_text(
+            f"🧱 پی منفرد\n\n{next_title}:"
+        )
+        return
+
+    await calculate_isolated(update, context)
+
+
+async def calculate_isolated(update, context):
+    data = get_data(context)
+    f = data["fields"]
+
+    try:
+        result = isolated_footing(
+            count=int(f["count"]),
+            length_m=f["length"],
+            width_m=f["width"],
+            thickness_m=f["thickness"],
+            lean_concrete_length_m=f["lean_length"],
+            lean_concrete_width_m=f["lean_width"],
+            lean_concrete_thickness_m=f["lean_thickness"],
+            bottom_diameter_mm=int(f["bottom_diameter"]),
+            bottom_spacing_mm=f["bottom_spacing"],
+            top_diameter_mm=(
+                int(f["top_diameter"])
+                if f["top_diameter"] > 0 else None
+            ),
+            top_spacing_mm=(
+                f["top_spacing"]
+                if f["top_spacing"] > 0 else None
+            ),
+            cover_mm=f["cover"],
+            lap_percent=f["lap"],
+            pedestal_length_m=f["pedestal_length"],
+            pedestal_width_m=f["pedestal_width"],
+            pedestal_height_m=f["pedestal_height"],
+        )
+
+        data["result"] = result
+        set_state(context, "isolated_result")
+
+        await show_isolated_result(update, context)
+
+    except Exception as e:
+        logger.exception("isolated footing error")
+        await update.message.reply_text(
+            f"❌ خطا در محاسبه:\n{e}"
         )
 
 
 async def show_isolated_result(update, context):
+    result = get_data(context)["result"]
 
-    result = context.user_data["last_result"]
-
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "🔩 جزئیات میلگرد",
-                callback_data="isolated_rebar",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "✂️ Cut List",
-                callback_data="isolated_cutlist",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🔙 فونداسیون",
-                callback_data="foundation",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🏠 منوی اصلی",
-                callback_data="home",
-            )
-        ],
-    ]
+    concrete = result.get("structural_concrete_m3", 0)
+    lean = result.get("lean_concrete_m3", 0)
+    total_rebar = result.get("total_rebar_kg", 0)
 
     text = (
-        "🧱 <b>نتیجه پی منفرد</b>\n\n"
-        f"تعداد پی: {result['count']}\n"
-        f"بتن مگر: {result['lean_concrete']:.2f} m³\n"
-        f"بتن پی: {result['footing_concrete']:.2f} m³\n"
-        f"بتن پدستال: {result['pedestal_concrete']:.2f} m³\n"
-        f"بتن سازه‌ای: {result['structural_concrete']:.2f} m³\n\n"
-        f"🔹 <b>کل بتن: {result['total_concrete']:.2f} m³</b>\n"
-        f"🔩 <b>کل میلگرد: {result['rebar']['total_weight']:.1f} kg</b>"
+        "🏗️ نتیجه پی منفرد\n\n"
+        "┌──────────────────────┐\n"
+        f"│ بتن سازه‌ای: {concrete:.2f} m³\n"
+        f"│ بتن مگر:      {lean:.2f} m³\n"
+        f"│ میلگرد:       {total_rebar:.1f} kg\n"
+        "└──────────────────────┘"
     )
 
-    if update.callback_query:
-        await update.callback_query.edit_message_text(
-            text,
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-        )
-    else:
-        await update.message.reply_text(
-            text,
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-        )
-
-
-# ============================================================
-# جزئیات میلگرد پی منفرد
-# ============================================================
-
-async def isolated_rebar(query, context):
-
-    result = context.user_data.get("last_result")
-
-    if not result:
-        await query.answer("نتیجه‌ای وجود ندارد.")
-        return
-
-    lines = [
-        "🔩 <b>جزئیات میلگرد پی منفرد</b>",
-        "",
-    ]
-
-    for item in result["rebar"]["details"]:
-
-        lines.append(
-            f"Φ{item['diameter']} | "
-            f"{item['description']}\n"
-            f"تعداد: {item['pieces']}\n"
-            f"طول هر قطعه: {item['piece_length']:.2f} m\n"
-            f"طول کل: {item['total_length']:.2f} m\n"
-            f"وزن: {item['weight']:.1f} kg\n"
-            f"شاخه 12 متری: {item['bars_12m']}"
-        )
-
-        lines.append("")
-
-    lines.append(
-        f"🔩 جمع میلگرد: "
-        f"{result['rebar']['total_weight']:.1f} kg"
-    )
-
-    await query.edit_message_text(
-        "\n".join(lines),
-        parse_mode="HTML",
-        reply_markup=back_button("isolated_result"),
-    )
-
-
-# ============================================================
-# Cut List
-# ============================================================
-
-async def isolated_cutlist(query, context):
-
-    result = context.user_data.get("last_result")
-
-    if not result:
-        await query.answer("نتیجه‌ای وجود ندارد.")
-        return
-
-    lines = [
-        "✂️ <b>Cut List</b>",
-        "",
-        "قطر   طول قطعه   تعداد",
-        "-----------------------",
-    ]
-
-    for item in result["rebar"]["details"]:
-
-        lines.append(
-            f"Φ{item['diameter']:<4}"
-            f"{item['piece_length']:<10.2f}"
-            f"{item['pieces']}"
-        )
-
-    await query.edit_message_text(
-        "\n".join(lines),
-        parse_mode="HTML",
-        reply_markup=back_button("isolated_result"),
-    )
-
-
-async def isolated_result(query, context):
-
-    fake_update = type(
-        "FakeUpdate",
-        (),
-        {
-            "callback_query": query,
-            "message": None,
-        },
-    )()
-
-    await show_isolated_result(
-        fake_update,
-        context,
-    )
-
-
-# ============================================================
-# پی نواری
-# ============================================================
-
-async def strip_start(query, context):
-
-    context.user_data.clear()
-    context.user_data["section"] = "strip"
-    context.user_data["step"] = "count"
-
-    await query.edit_message_text(
-        "🧱 <b>پی نواری</b>\n\n"
-        "تعداد نوار / پی را وارد کنید:",
-        parse_mode="HTML",
-        reply_markup=back_button("foundation"),
-    )
-
-
-async def strip_process(update, context, text):
-
-    step = get_step(context)
-
-    try:
-
-        if step == "count":
-            context.user_data["count"] = int(text)
-            context.user_data["step"] = "length"
-            await update.message.reply_text("طول نوار را بر حسب متر وارد کنید:")
-            return
-
-        if step == "length":
-            context.user_data["length"] = float(text)
-            context.user_data["step"] = "width"
-            await update.message.reply_text("عرض پی را وارد کنید:")
-            return
-
-        if step == "width":
-            context.user_data["width"] = float(text)
-            context.user_data["step"] = "thickness"
-            await update.message.reply_text("ضخامت پی را وارد کنید:")
-            return
-
-        if step == "thickness":
-            context.user_data["thickness"] = float(text)
-            context.user_data["step"] = "lean_length"
-            await update.message.reply_text("طول بتن مگر را وارد کنید:")
-            return
-
-        if step == "lean_length":
-            context.user_data["lean_length"] = float(text)
-            context.user_data["step"] = "lean_width"
-            await update.message.reply_text("عرض بتن مگر را وارد کنید:")
-            return
-
-        if step == "lean_width":
-            context.user_data["lean_width"] = float(text)
-            context.user_data["step"] = "lean_thickness"
-            await update.message.reply_text("ضخامت بتن مگر را وارد کنید:")
-            return
-
-        if step == "lean_thickness":
-            context.user_data["lean_thickness"] = float(text)
-            context.user_data["step"] = "long_diameter"
-            await update.message.reply_text("قطر میلگرد طولی پایین:")
-            return
-
-        if step == "long_diameter":
-            context.user_data["long_diameter"] = int(text)
-            context.user_data["step"] = "long_count"
-            await update.message.reply_text("تعداد میلگرد طولی:")
-            return
-
-        if step == "long_count":
-            context.user_data["long_count"] = int(text)
-            context.user_data["step"] = "trans_diameter"
-            await update.message.reply_text("قطر میلگرد عرضی:")
-            return
-
-        if step == "trans_diameter":
-            context.user_data["trans_diameter"] = int(text)
-            context.user_data["step"] = "trans_spacing"
-            await update.message.reply_text("فاصله میلگرد عرضی بر حسب میلی‌متر:")
-            return
-
-        if step == "trans_spacing":
-
-            result = strip_footing(
-                strip_count=context.user_data["count"],
-                strip_length_m=context.user_data["length"],
-                footing_width_m=context.user_data["width"],
-                footing_thickness_m=context.user_data["thickness"],
-                lean_length_m=context.user_data["lean_length"],
-                lean_width_m=context.user_data["lean_width"],
-                lean_thickness_m=context.user_data["lean_thickness"],
-                longitudinal_diameter_mm=context.user_data["long_diameter"],
-                longitudinal_count=context.user_data["long_count"],
-                transverse_diameter_mm=context.user_data["trans_diameter"],
-                transverse_spacing_mm=float(text),
-            )
-
-            context.user_data["last_result"] = result
-            context.user_data["step"] = None
-
-            await show_generic_result(
-                update,
-                context,
-                "🧱 نتیجه پی نواری",
-                result,
-                "foundation",
-            )
-
-    except Exception as e:
-
-        logger.exception("Strip footing error")
-
-        await update.message.reply_text(
-            f"❌ خطا: {e}"
-        )
-
-
-# ============================================================
-# پی گسترده
-# ============================================================
-
-async def raft_start(query, context):
-
-    context.user_data.clear()
-    context.user_data["section"] = "raft"
-    context.user_data["step"] = "length"
-
-    await query.edit_message_text(
-        "🧱 <b>پی گسترده / رادیه</b>\n\n"
-        "طول رادیه را وارد کنید:",
-        parse_mode="HTML",
-        reply_markup=back_button("foundation"),
-    )
-
-
-async def raft_process(update, context, text):
-
-    step = get_step(context)
-
-    try:
-
-        if step == "length":
-            context.user_data["length"] = float(text)
-            context.user_data["step"] = "width"
-            await update.message.reply_text("عرض رادیه:")
-            return
-
-        if step == "width":
-            context.user_data["width"] = float(text)
-            context.user_data["step"] = "thickness"
-            await update.message.reply_text("ضخامت رادیه:")
-            return
-
-        if step == "thickness":
-            context.user_data["thickness"] = float(text)
-            context.user_data["step"] = "lean_length"
-            await update.message.reply_text("طول بتن مگر:")
-            return
-
-        if step == "lean_length":
-            context.user_data["lean_length"] = float(text)
-            context.user_data["step"] = "lean_width"
-            await update.message.reply_text("عرض بتن مگر:")
-            return
-
-        if step == "lean_width":
-            context.user_data["lean_width"] = float(text)
-            context.user_data["step"] = "lean_thickness"
-            await update.message.reply_text("ضخامت بتن مگر:")
-            return
-
-        if step == "lean_thickness":
-            context.user_data["lean_thickness"] = float(text)
-            context.user_data["step"] = "bottom_x_diameter"
-            await update.message.reply_text("قطر میلگرد پایین X:")
-            return
-
-        if step == "bottom_x_diameter":
-            context.user_data["bottom_x_diameter"] = int(text)
-            context.user_data["step"] = "bottom_x_spacing"
-            await update.message.reply_text("فاصله پایین X:")
-            return
-
-        if step == "bottom_x_spacing":
-            context.user_data["bottom_x_spacing"] = float(text)
-            context.user_data["step"] = "bottom_y_diameter"
-            await update.message.reply_text("قطر میلگرد پایین Y:")
-            return
-
-        if step == "bottom_y_diameter":
-            context.user_data["bottom_y_diameter"] = int(text)
-            context.user_data["step"] = "bottom_y_spacing"
-            await update.message.reply_text("فاصله پایین Y:")
-            return
-
-        if step == "bottom_y_spacing":
-
-            result = raft_foundation(
-                length_m=context.user_data["length"],
-                width_m=context.user_data["width"],
-                thickness_m=context.user_data["thickness"],
-                lean_length_m=context.user_data["lean_length"],
-                lean_width_m=context.user_data["lean_width"],
-                lean_thickness_m=context.user_data["lean_thickness"],
-                bottom_x_diameter_mm=context.user_data["bottom_x_diameter"],
-                bottom_x_spacing_mm=context.user_data["bottom_x_spacing"],
-                bottom_y_diameter_mm=context.user_data["bottom_y_diameter"],
-                bottom_y_spacing_mm=float(text),
-            )
-
-            context.user_data["last_result"] = result
-            context.user_data["step"] = None
-
-            await show_generic_result(
-                update,
-                context,
-                "🧱 نتیجه پی گسترده",
-                result,
-                "foundation",
-            )
-
-    except Exception as e:
-
-        logger.exception("Raft error")
-
-        await update.message.reply_text(
-            f"❌ خطا: {e}"
-        )
-
-
-# ============================================================
-# ستون‌ها
-# ============================================================
-
-async def columns_menu(query, context):
-
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "⬛ ستون مستطیلی",
-                callback_data="column_rect",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "⚪ ستون گرد",
-                callback_data="column_round",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🔙 بازگشت",
-                callback_data="home",
-            )
-        ],
-    ]
-
-    await query.edit_message_text(
-        "🏛️ <b>ستون‌ها</b>\n\n"
-        "نوع ستون را انتخاب کنید:",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
-
-
-async def column_rect_start(query, context):
-
-    context.user_data.clear()
-    context.user_data["section"] = "column_rect"
-    context.user_data["step"] = "count"
-
-    await query.edit_message_text(
-        "⬛ <b>ستون مستطیلی</b>\n\n"
-        "تعداد ستون:",
-        parse_mode="HTML",
-        reply_markup=back_button("columns"),
-    )
-
-
-async def column_round_start(query, context):
-
-    context.user_data.clear()
-    context.user_data["section"] = "column_round"
-    context.user_data["step"] = "count"
-
-    await query.edit_message_text(
-        "⚪ <b>ستون گرد</b>\n\n"
-        "تعداد ستون:",
-        parse_mode="HTML",
-        reply_markup=back_button("columns"),
-    )
-
-
-# ============================================================
-# تیرها
-# ============================================================
-
-async def beams_menu(query, context):
-
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "📐 تیر اصلی",
-                callback_data="beam_main",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "📐 تیر فرعی",
-                callback_data="beam_secondary",
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🔙 بازگشت",
-                callback_data="home",
-            )
-        ],
-    ]
-
-    await query.edit_message_text(
-        "📐 <b>تیرها</b>\n\n"
-        "نوع تیر را انتخاب کنید:",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
-
-
-async def beam_start(query, context, beam_type):
-
-    context.user_data.clear()
-    context.user_data["section"] = "beam"
-    context.user_data["beam_type"] = beam_type
-    context.user_data["step"] = "count"
-
-    await query.edit_message_text(
-        "📐 <b>تیر</b>\n\n"
-        "تعداد تیر را وارد کنید:",
-        parse_mode="HTML",
-        reply_markup=back_button("beams"),
-    )
-
-
-# ============================================================
-# سقف‌ها
-# ============================================================
-
-async def roofs_menu(query, context):
-
-    roof_types = [
-        "تیرچه یونولیتی",
-        "تیرچه سفالی",
-        "تیرچه دوبل",
-        "کرومیت",
-        "کامپوزیت",
-        "عرشه فولادی",
-        "دال بتنی",
-        "وافل",
-    ]
-
-    keyboard = []
-
-    for i in range(0, len(roof_types), 2):
-
-        row = []
-
-        for roof_type in roof_types[i:i + 2]:
-
-            row.append(
-                InlineKeyboardButton(
-                    roof_type,
-                    callback_data=f"roof:{roof_type}",
-                )
-            )
-
-        keyboard.append(row)
-
-    keyboard.append([
-        InlineKeyboardButton(
-            "🔙 بازگشت",
-            callback_data="home",
-        )
+    keyboard = InlineKeyboardMarkup([
+        [menu_button("🔩 جزئیات میلگرد", "isolated_rebar")],
+        [menu_button("✂️ Cut List", "isolated_cutlist")],
+        [menu_button("🔙 فونداسیون", "foundation")],
+        [menu_button("🏠 منوی اصلی", "home")],
     ])
 
-    await query.edit_message_text(
-        "🏠 <b>سقف‌ها</b>\n\n"
-        "نوع سقف را انتخاب کنید:",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+    await update.message.reply_text(
+        text,
+        reply_markup=keyboard,
     )
 
 
-async def roof_start(query, context, roof_type):
+async def isolated_rebar(update, context):
+    result = get_data(context)["result"]
 
-    context.user_data.clear()
-    context.user_data["section"] = "roof"
-    context.user_data["roof_type"] = roof_type
-    context.user_data["step"] = "area"
+    details = result.get("rebar_details", [])
 
-    await query.edit_message_text(
-        f"🏠 <b>{roof_type}</b>\n\n"
-        "مساحت سقف را بر حسب مترمربع وارد کنید:",
-        parse_mode="HTML",
-        reply_markup=back_button("roofs"),
-    )
+    if not details:
+        text = "🔩 اطلاعات میلگرد موجود نیست."
+    else:
+        lines = ["🔩 میلگرد\n"]
 
+        total = 0
 
-# ============================================================
-# راه‌پله
-# ============================================================
+        for item in details:
+            diameter = item.get("diameter_mm", 0)
+            weight = item.get("weight_kg", 0)
+            pieces = item.get("pieces", 0)
 
-async def stairs_start(query, context):
+            total += weight
 
-    context.user_data.clear()
-    context.user_data["section"] = "stairs"
-    context.user_data["step"] = "count"
-
-    await query.edit_message_text(
-        "🪜 <b>راه‌پله</b>\n\n"
-        "تعداد راه‌پله را وارد کنید:",
-        parse_mode="HTML",
-        reply_markup=back_button("home"),
-    )
-
-
-# ============================================================
-# شناژ و کلاف
-# ============================================================
-
-async def ties_start(query, context):
-
-    context.user_data.clear()
-    context.user_data["section"] = "ties"
-    context.user_data["step"] = "count"
-
-    await query.edit_message_text(
-        "🔗 <b>شناژ و کلاف</b>\n\n"
-        "تعداد شناژ / کلاف را وارد کنید:",
-        parse_mode="HTML",
-        reply_markup=back_button("home"),
-    )
-
-
-# ============================================================
-# دیوارها
-# ============================================================
-
-async def walls_menu(query, context):
-
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "🧱 دیوار برشی",
-                callback_data="wall_shear",
+            lines.append(
+                f"Φ{diameter:<3} → "
+                f"{weight:>8.1f} kg → "
+                f"{pieces} قطعه"
             )
-        ],
-        [
-            InlineKeyboardButton(
-                "🧱 دیوار حائل",
-                callback_data="wall_retaining",
+
+        lines.append(f"\nجمع میلگرد: {total:.1f} kg")
+        text = "\n".join(lines)
+
+    await update.callback_query.edit_message_text(
+        text,
+        reply_markup=back_keyboard("isolated_result"),
+    )
+
+
+async def isolated_cutlist(update, context):
+    result = get_data(context)["result"]
+
+    cutlist = result.get("cut_list", [])
+
+    if not cutlist:
+        text = "✂️ Cut List موجود نیست."
+    else:
+        lines = [
+            "✂️ Cut List\n",
+            "قطر    طول قطعه    تعداد",
+            "-------------------------",
+        ]
+
+        for item in cutlist:
+            diameter = item.get("diameter_mm", 0)
+            length = item.get("length_m", 0)
+            count = item.get("count", 0)
+
+            lines.append(
+                f"Φ{diameter:<4} "
+                f"{length:<10.2f} "
+                f"{count}"
             )
-        ],
-        [
-            InlineKeyboardButton(
-                "🔙 بازگشت",
-                callback_data="home",
-            )
-        ],
-    ]
 
-    await query.edit_message_text(
-        "🧱 <b>دیوارها</b>\n\n"
-        "نوع دیوار را انتخاب کنید:",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        text = "\n".join(lines)
+
+    await update.callback_query.edit_message_text(
+        text,
+        reply_markup=back_keyboard("isolated_result"),
     )
 
 
-async def wall_start(query, context, wall_type):
+# =========================================================
+# GENERIC WIZARD
+# =========================================================
 
-    context.user_data.clear()
-    context.user_data["section"] = "wall"
-    context.user_data["wall_type"] = wall_type
-    context.user_data["step"] = "count"
-
-    await query.edit_message_text(
-        "🧱 <b>دیوار بتنی</b>\n\n"
-        "تعداد دیوار:",
-        parse_mode="HTML",
-        reply_markup=back_button("walls"),
-    )
-
-
-# ============================================================
-# منوی خلاصه
-# ============================================================
-
-async def summary_menu(query, context):
-
-    await query.edit_message_text(
-        "📊 <b>خلاصه پروژه</b>\n\n"
-        "فعلاً محاسبات هر عضو به صورت مستقل انجام می‌شود.\n\n"
-        "در مرحله بعدی می‌توانیم نتایج همه اعضا را "
-        "به یک خلاصه پروژه واحد متصل کنیم.",
-        parse_mode="HTML",
-        reply_markup=back_button("home"),
-    )
-
-
-# ============================================================
-# تنظیمات
-# ============================================================
-
-async def settings_menu(query, context):
-
-    await query.edit_message_text(
-        "⚙️ <b>تنظیمات</b>\n\n"
-        "نسخه فعلی:\n"
-        "🏗️ اسکلت بتنی\n"
-        "📐 محاسبات بتن و میلگرد\n"
-        "✂️ Cut List\n"
-        "🔩 جزئیات آرماتور",
-        parse_mode="HTML",
-        reply_markup=back_button("home"),
-    )
-
-
-# ============================================================
-# راهنما
-# ============================================================
-
-async def help_menu(query, context):
-
-    await query.edit_message_text(
-        "ℹ️ <b>راهنما</b>\n\n"
-        "1️⃣ عضو سازه‌ای را انتخاب کنید.\n"
-        "2️⃣ ابعاد و مشخصات را وارد کنید.\n"
-        "3️⃣ مقدار بتن و میلگرد محاسبه می‌شود.\n"
-        "4️⃣ جزئیات میلگرد و Cut List جداگانه قابل مشاهده است.\n\n"
-        "⚠️ محاسبات این نسخه برای برآورد اولیه است "
-        "و برای متره دقیق اجرایی باید نقشه‌های سازه "
-        "و دیتیل‌های آرماتور بررسی شوند.",
-        parse_mode="HTML",
-        reply_markup=back_button("home"),
-    )
-
-
-# ============================================================
-# نمایش نتیجه عمومی
-# ============================================================
-
-async def show_generic_result(
+async def start_generic(
     update,
     context,
+    mode,
     title,
-    result,
-    back_to,
+    fields,
+    result_function,
+    back_callback,
 ):
+    clear_state(context)
 
-    concrete = result.get(
-        "total_concrete",
-        result.get("concrete", 0),
+    data = get_data(context)
+
+    data["mode"] = mode
+    data["index"] = 0
+    data["fields"] = {}
+    data["generic_fields"] = fields
+    data["result_function"] = result_function
+    data["back_callback"] = back_callback
+
+    set_state(context, "generic")
+
+    await update.callback_query.edit_message_text(
+        f"{title}\n\n{fields[0][1]}:"
     )
 
-    rebar = result.get(
-        "rebar",
-        {},
-    )
 
-    rebar_weight = rebar.get(
-        "total_weight",
-        result.get("rebar_weight", 0),
-    )
+async def generic_receive(update, context):
+    data = get_data(context)
 
-    text = (
-        f"{title}\n\n"
-        f"🧱 بتن: <b>{concrete:.2f} m³</b>\n"
-        f"🔩 میلگرد: <b>{rebar_weight:.1f} kg</b>"
-    )
+    fields = data["generic_fields"]
+    index = data["index"]
 
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "🔙 بازگشت",
-                callback_data=back_to,
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🏠 منوی اصلی",
-                callback_data="home",
-            )
-        ],
-    ]
+    if index >= len(fields):
+        return
 
-    if update.callback_query:
+    key, title = fields[index]
 
-        await update.callback_query.edit_message_text(
-            text,
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-        )
-
-    else:
-
+    try:
+        value = float(update.message.text.replace(",", "."))
+    except ValueError:
         await update.message.reply_text(
-            text,
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(keyboard),
+            t(context, "invalid")
         )
+        return
 
+    data["fields"][key] = value
+    data["index"] = index + 1
 
-# ============================================================
-# پردازش پیام‌های متنی
-# ============================================================
-
-async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    text = update.message.text.strip()
-    section = context.user_data.get("section")
-
-    if not section:
+    if data["index"] < len(fields):
         await update.message.reply_text(
-            "از منوی اصلی یک گزینه را انتخاب کنید.",
-            reply_markup=main_menu(),
+            f"{fields[data['index']][1]}:"
         )
         return
 
     try:
+        fn = data["result_function"]
 
-        # ----------------------------------------------------
-        # سقف
-        # ----------------------------------------------------
+        result = fn(data["fields"])
 
-        if section == "roof":
+        data["result"] = result
+        set_state(context, "generic_result")
 
-            step = get_step(context)
-
-            if step == "area":
-
-                context.user_data["area"] = float(text)
-                context.user_data["step"] = "rebar"
-
-                await update.message.reply_text(
-                    "مقدار میلگرد تقریبی سقف را بر حسب kg/m² وارد کنید.\n"
-                    "اگر نمی‌خواهید محاسبه شود: 0"
-                )
-
-                return
-
-            if step == "rebar":
-
-                result = roof_slab(
-                    roof_type=context.user_data["roof_type"],
-                    area_m2=context.user_data["area"],
-                    rebar_kg_per_m2=float(text),
-                )
-
-                context.user_data["last_result"] = result
-                context.user_data["step"] = None
-
-                await show_generic_result(
-                    update,
-                    context,
-                    f"🏠 {context.user_data['roof_type']}",
-                    result,
-                    "roofs",
-                )
-
-                return
-
-        # ----------------------------------------------------
-        # شناژ
-        # ----------------------------------------------------
-
-        if section == "ties":
-
-            step = get_step(context)
-
-            if step == "count":
-                context.user_data["count"] = int(text)
-                context.user_data["step"] = "length"
-                await update.message.reply_text("طول شناژ:")
-                return
-
-            if step == "length":
-                context.user_data["length"] = float(text)
-                context.user_data["step"] = "width"
-                await update.message.reply_text("عرض شناژ:")
-                return
-
-            if step == "width":
-                context.user_data["width"] = float(text)
-                context.user_data["step"] = "height"
-                await update.message.reply_text("ارتفاع شناژ:")
-                return
-
-            if step == "height":
-                context.user_data["height"] = float(text)
-                context.user_data["step"] = "main_diameter"
-                await update.message.reply_text("قطر میلگرد طولی:")
-                return
-
-            if step == "main_diameter":
-                context.user_data["main_diameter"] = int(text)
-                context.user_data["step"] = "main_count"
-                await update.message.reply_text("تعداد میلگرد طولی:")
-                return
-
-            if step == "main_count":
-                context.user_data["main_count"] = int(text)
-                context.user_data["step"] = "stirrup_diameter"
-                await update.message.reply_text("قطر خاموت:")
-                return
-
-            if step == "stirrup_diameter":
-                context.user_data["stirrup_diameter"] = int(text)
-                context.user_data["step"] = "stirrup_spacing"
-                await update.message.reply_text("فاصله خاموت:")
-                return
-
-            if step == "stirrup_spacing":
-
-                result = tie_beam(
-                    count=context.user_data["count"],
-                    length_m=context.user_data["length"],
-                    width_m=context.user_data["width"],
-                    height_m=context.user_data["height"],
-                    main_diameter_mm=context.user_data["main_diameter"],
-                    main_count=context.user_data["main_count"],
-                    stirrup_diameter_mm=context.user_data["stirrup_diameter"],
-                    stirrup_spacing_mm=float(text),
-                )
-
-                context.user_data["last_result"] = result
-                context.user_data["step"] = None
-
-                await show_generic_result(
-                    update,
-                    context,
-                    "🔗 نتیجه شناژ / کلاف",
-                    result,
-                    "home",
-                )
-
-                return
-
-        # ----------------------------------------------------
-        # ستون مستطیلی
-        # ----------------------------------------------------
-
-        if section == "column_rect":
-
-            step = get_step(context)
-
-            if step == "count":
-                context.user_data["count"] = int(text)
-                context.user_data["step"] = "width"
-                await update.message.reply_text("عرض ستون:")
-                return
-
-            if step == "width":
-                context.user_data["width"] = float(text)
-                context.user_data["step"] = "depth"
-                await update.message.reply_text("طول / عمق ستون:")
-                return
-
-            if step == "depth":
-                context.user_data["depth"] = float(text)
-                context.user_data["step"] = "height"
-                await update.message.reply_text("ارتفاع ستون:")
-                return
-
-            if step == "height":
-                context.user_data["height"] = float(text)
-                context.user_data["step"] = "main_diameter"
-                await update.message.reply_text("قطر میلگرد طولی:")
-                return
-
-            if step == "main_diameter":
-                context.user_data["main_diameter"] = int(text)
-                context.user_data["step"] = "main_count"
-                await update.message.reply_text("تعداد میلگرد طولی:")
-                return
-
-            if step == "main_count":
-                context.user_data["main_count"] = int(text)
-                context.user_data["step"] = "stirrup_diameter"
-                await update.message.reply_text("قطر خاموت:")
-                return
-
-            if step == "stirrup_diameter":
-                context.user_data["stirrup_diameter"] = int(text)
-                context.user_data["step"] = "stirrup_spacing"
-                await update.message.reply_text("فاصله خاموت:")
-                return
-
-            if step == "stirrup_spacing":
-
-                result = column_rectangular(
-                    count=context.user_data["count"],
-                    width_m=context.user_data["width"],
-                    depth_m=context.user_data["depth"],
-                    height_m=context.user_data["height"],
-                    main_diameter_mm=context.user_data["main_diameter"],
-                    main_count=context.user_data["main_count"],
-                    stirrup_diameter_mm=context.user_data["stirrup_diameter"],
-                    stirrup_spacing_mm=float(text),
-                )
-
-                context.user_data["last_result"] = result
-                context.user_data["step"] = None
-
-                await show_generic_result(
-                    update,
-                    context,
-                    "⬛ نتیجه ستون مستطیلی",
-                    result,
-                    "columns",
-                )
-
-                return
-
-        # ----------------------------------------------------
-        # ستون گرد
-        # ----------------------------------------------------
-
-        if section == "column_round":
-
-            step = get_step(context)
-
-            if step == "count":
-                context.user_data["count"] = int(text)
-                context.user_data["step"] = "diameter"
-                await update.message.reply_text("قطر ستون:")
-                return
-
-            if step == "diameter":
-                context.user_data["diameter"] = float(text)
-                context.user_data["step"] = "height"
-                await update.message.reply_text("ارتفاع ستون:")
-                return
-
-            if step == "height":
-                context.user_data["height"] = float(text)
-                context.user_data["step"] = "main_diameter"
-                await update.message.reply_text("قطر میلگرد طولی:")
-                return
-
-            if step == "main_diameter":
-                context.user_data["main_diameter"] = int(text)
-                context.user_data["step"] = "main_count"
-                await update.message.reply_text("تعداد میلگرد طولی:")
-                return
-
-            if step == "main_count":
-                context.user_data["main_count"] = int(text)
-                context.user_data["step"] = "stirrup_diameter"
-                await update.message.reply_text("قطر خاموت:")
-                return
-
-            if step == "stirrup_diameter":
-                context.user_data["stirrup_diameter"] = int(text)
-                context.user_data["step"] = "stirrup_spacing"
-                await update.message.reply_text("فاصله خاموت:")
-                return
-
-            if step == "stirrup_spacing":
-
-                result = column_round(
-                    count=context.user_data["count"],
-                    diameter_m=context.user_data["diameter"],
-                    height_m=context.user_data["height"],
-                    main_diameter_mm=context.user_data["main_diameter"],
-                    main_count=context.user_data["main_count"],
-                    stirrup_diameter_mm=context.user_data["stirrup_diameter"],
-                    stirrup_spacing_mm=float(text),
-                )
-
-                context.user_data["last_result"] = result
-                context.user_data["step"] = None
-
-                await show_generic_result(
-                    update,
-                    context,
-                    "⚪ نتیجه ستون گرد",
-                    result,
-                    "columns",
-                )
-
-                return
-
-        # ----------------------------------------------------
-        # تیر
-        # ----------------------------------------------------
-
-        if section == "beam":
-
-            step = get_step(context)
-
-            if step == "count":
-                context.user_data["count"] = int(text)
-                context.user_data["step"] = "length"
-                await update.message.reply_text("طول تیر:")
-                return
-
-            if step == "length":
-                context.user_data["length"] = float(text)
-                context.user_data["step"] = "width"
-                await update.message.reply_text("عرض تیر:")
-                return
-
-            if step == "width":
-                context.user_data["width"] = float(text)
-                context.user_data["step"] = "height"
-                await update.message.reply_text("ارتفاع تیر:")
-                return
-
-            if step == "height":
-                context.user_data["height"] = float(text)
-                context.user_data["step"] = "main_diameter"
-                await update.message.reply_text("قطر میلگرد طولی:")
-                return
-
-            if step == "main_diameter":
-                context.user_data["main_diameter"] = int(text)
-                context.user_data["step"] = "top_count"
-                await update.message.reply_text("تعداد میلگرد بالایی:")
-                return
-
-            if step == "top_count":
-                context.user_data["top_count"] = int(text)
-                context.user_data["step"] = "bottom_count"
-                await update.message.reply_text("تعداد میلگرد پایینی:")
-                return
-
-            if step == "bottom_count":
-                context.user_data["bottom_count"] = int(text)
-                context.user_data["step"] = "stirrup_diameter"
-                await update.message.reply_text("قطر خاموت:")
-                return
-
-            if step == "stirrup_diameter":
-                context.user_data["stirrup_diameter"] = int(text)
-                context.user_data["step"] = "stirrup_spacing"
-                await update.message.reply_text("فاصله خاموت:")
-                return
-
-            if step == "stirrup_spacing":
-
-                result = beam(
-                    count=context.user_data["count"],
-                    length_m=context.user_data["length"],
-                    width_m=context.user_data["width"],
-                    height_m=context.user_data["height"],
-                    main_diameter_mm=context.user_data["main_diameter"],
-                    main_top_count=context.user_data["top_count"],
-                    main_bottom_count=context.user_data["bottom_count"],
-                    stirrup_diameter_mm=context.user_data["stirrup_diameter"],
-                    stirrup_spacing_mm=float(text),
-                )
-
-                context.user_data["last_result"] = result
-                context.user_data["step"] = None
-
-                await show_generic_result(
-                    update,
-                    context,
-                    "📐 نتیجه تیر",
-                    result,
-                    "beams",
-                )
-
-                return
-
-        # ----------------------------------------------------
-        # دیوار
-        # ----------------------------------------------------
-
-        if section == "wall":
-
-            step = get_step(context)
-
-            if step == "count":
-                context.user_data["count"] = int(text)
-                context.user_data["step"] = "length"
-                await update.message.reply_text("طول دیوار:")
-                return
-
-            if step == "length":
-                context.user_data["length"] = float(text)
-                context.user_data["step"] = "thickness"
-                await update.message.reply_text("ضخامت دیوار:")
-                return
-
-            if step == "thickness":
-                context.user_data["thickness"] = float(text)
-                context.user_data["step"] = "height"
-                await update.message.reply_text("ارتفاع دیوار:")
-                return
-
-            if step == "height":
-                context.user_data["height"] = float(text)
-                context.user_data["step"] = "vertical_diameter"
-                await update.message.reply_text("قطر میلگرد قائم:")
-                return
-
-            if step == "vertical_diameter":
-                context.user_data["vertical_diameter"] = int(text)
-                context.user_data["step"] = "vertical_spacing"
-                await update.message.reply_text("فاصله میلگرد قائم:")
-                return
-
-            if step == "vertical_spacing":
-                context.user_data["vertical_spacing"] = float(text)
-                context.user_data["step"] = "horizontal_diameter"
-                await update.message.reply_text("قطر میلگرد افقی:")
-                return
-
-            if step == "horizontal_diameter":
-                context.user_data["horizontal_diameter"] = int(text)
-                context.user_data["step"] = "horizontal_spacing"
-                await update.message.reply_text("فاصله میلگرد افقی:")
-                return
-
-            if step == "horizontal_spacing":
-
-                result = wall_concrete(
-                    count=context.user_data["count"],
-                    length_m=context.user_data["length"],
-                    thickness_m=context.user_data["thickness"],
-                    height_m=context.user_data["height"],
-                    vertical_diameter_mm=context.user_data["vertical_diameter"],
-                    vertical_spacing_mm=context.user_data["vertical_spacing"],
-                    horizontal_diameter_mm=context.user_data["horizontal_diameter"],
-                    horizontal_spacing_mm=float(text),
-                )
-
-                context.user_data["last_result"] = result
-                context.user_data["step"] = None
-
-                await show_generic_result(
-                    update,
-                    context,
-                    "🧱 نتیجه دیوار",
-                    result,
-                    "walls",
-                )
-
-                return
-
-        # ----------------------------------------------------
-        # راه‌پله
-        # ----------------------------------------------------
-
-        if section == "stairs":
-
-            step = get_step(context)
-
-            if step == "count":
-                context.user_data["count"] = int(text)
-                context.user_data["step"] = "length"
-                await update.message.reply_text("طول مسیر راه‌پله:")
-                return
-
-            if step == "length":
-                context.user_data["length"] = float(text)
-                context.user_data["step"] = "width"
-                await update.message.reply_text("عرض راه‌پله:")
-                return
-
-            if step == "width":
-                context.user_data["width"] = float(text)
-                context.user_data["step"] = "thickness"
-                await update.message.reply_text("ضخامت دال راه‌پله:")
-                return
-
-            if step == "thickness":
-                context.user_data["thickness"] = float(text)
-                context.user_data["step"] = "main_diameter"
-                await update.message.reply_text("قطر میلگرد اصلی:")
-                return
-
-            if step == "main_diameter":
-                context.user_data["main_diameter"] = int(text)
-                context.user_data["step"] = "main_spacing"
-                await update.message.reply_text("فاصله میلگرد اصلی:")
-                return
-
-            if step == "main_spacing":
-                context.user_data["main_spacing"] = float(text)
-                context.user_data["step"] = "distribution_diameter"
-                await update.message.reply_text("قطر میلگرد توزیعی:")
-                return
-
-            if step == "distribution_diameter":
-                context.user_data["distribution_diameter"] = int(text)
-                context.user_data["step"] = "distribution_spacing"
-                await update.message.reply_text("فاصله میلگرد توزیعی:")
-                return
-
-            if step == "distribution_spacing":
-
-                result = stair_slab(
-                    count=context.user_data["count"],
-                    length_m=context.user_data["length"],
-                    width_m=context.user_data["width"],
-                    thickness_m=context.user_data["thickness"],
-                    main_diameter_mm=context.user_data["main_diameter"],
-                    main_spacing_mm=context.user_data["main_spacing"],
-                    distribution_diameter_mm=context.user_data["distribution_diameter"],
-                    distribution_spacing_mm=float(text),
-                )
-
-                context.user_data["last_result"] = result
-                context.user_data["step"] = None
-
-                await show_generic_result(
-                    update,
-                    context,
-                    "🪜 نتیجه راه‌پله",
-                    result,
-                    "home",
-                )
-
-                return
-
-        # ----------------------------------------------------
-        # پی منفرد
-        # ----------------------------------------------------
-
-        if section == "isolated":
-
-            await isolated_process(
-                update,
-                context,
-                text,
-            )
-
-            return
-
-        # ----------------------------------------------------
-        # پی نواری
-        # ----------------------------------------------------
-
-        if section == "strip":
-
-            await strip_process(
-                update,
-                context,
-                text,
-            )
-
-            return
-
-        # ----------------------------------------------------
-        # پی گسترده
-        # ----------------------------------------------------
-
-        if section == "raft":
-
-            await raft_process(
-                update,
-                context,
-                text,
-            )
-
-            return
-
-        await update.message.reply_text(
-            "ورودی نامعتبر است."
-        )
+        await show_generic_result(update, context)
 
     except Exception as e:
-
-        logger.exception("Text handler error")
+        logger.exception("generic calculation error")
 
         await update.message.reply_text(
             f"❌ خطا در محاسبه:\n{e}"
         )
 
 
-# ============================================================
-# مدیریت دکمه‌ها
-# ============================================================
+async def show_generic_result(update, context):
+    data = get_data(context)
+    result = data["result"]
 
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    concrete = result.get(
+        "total_concrete_m3",
+        result.get(
+            "concrete",
+            result.get("total_concrete", 0)
+        )
+    )
 
-    query = update.callback_query
+    rebar = result.get(
+        "total_rebar_kg",
+        result.get(
+            "rebar_weight",
+            0
+        )
+    )
 
-    await query.answer()
+    title = data.get("mode", "نتیجه")
 
-    data = query.data
+    text = (
+        f"🏗️ نتیجه {title}\n\n"
+        "┌──────────────────────┐\n"
+        f"│ بتن:     {concrete:.2f} m³\n"
+        f"│ میلگرد:  {rebar:.1f} kg\n"
+        "└──────────────────────┘"
+    )
 
-    try:
+    keyboard = InlineKeyboardMarkup([
+        [menu_button("🔩 جزئیات میلگرد", "generic_rebar")],
+        [menu_button("✂️ Cut List", "generic_cutlist")],
+        [
+            menu_button(
+                "🔙 بازگشت",
+                data.get("back_callback", "home")
+            )
+        ],
+        [menu_button("🏠 منوی اصلی", "home")],
+    ])
 
-        # ----------------------------------------------------
-        # خانه
-        # ----------------------------------------------------
+    await update.message.reply_text(
+        text,
+        reply_markup=keyboard,
+    )
 
-        if data == "home":
-            await show_home(query, context)
-            return
 
-        # ----------------------------------------------------
-        # فونداسیون
-        # ----------------------------------------------------
+async def generic_rebar(update, context):
+    result = get_data(context)["result"]
 
-        if data == "foundation":
-            await foundation_menu(query, context)
-            return
+    details = result.get("rebar_details", [])
 
-        if data == "foundation_isolated":
-            await isolated_start(query, context)
-            return
+    if not details:
+        text = "🔩 اطلاعات جزئی میلگرد موجود نیست."
+    else:
+        lines = ["🔩 میلگرد\n"]
 
-        if data == "foundation_strip":
-            await strip_start(query, context)
-            return
+        total = 0
 
-        if data == "foundation_raft":
-            await raft_start(query, context)
-            return
+        for item in details:
+            diameter = item.get("diameter_mm", 0)
+            weight = item.get("weight_kg", 0)
+            pieces = item.get("pieces", 0)
 
-        # ----------------------------------------------------
-        # ستون
-        # ----------------------------------------------------
+            total += weight
 
-        if data == "columns":
-            await columns_menu(query, context)
-            return
-
-        if data == "column_rect":
-            await column_rect_start(query, context)
-            return
-
-        if data == "column_round":
-            await column_round_start(query, context)
-            return
-
-        # ----------------------------------------------------
-        # تیر
-        # ----------------------------------------------------
-
-        if data == "beams":
-            await beams_menu(query, context)
-            return
-
-        if data == "beam_main":
-            await beam_start(query, context, "main")
-            return
-
-        if data == "beam_secondary":
-            await beam_start(query, context, "secondary")
-            return
-
-        # ----------------------------------------------------
-        # سقف
-        # ----------------------------------------------------
-
-        if data == "roofs":
-            await roofs_menu(query, context)
-            return
-
-        if data.startswith("roof:"):
-
-            roof_type = data.split(":", 1)[1]
-
-            await roof_start(
-                query,
-                context,
-                roof_type,
+            lines.append(
+                f"Φ{diameter:<3} → "
+                f"{weight:>8.1f} kg → "
+                f"{pieces} قطعه"
             )
 
-            return
+        lines.append(f"\nجمع میلگرد: {total:.1f} kg")
 
-        # ----------------------------------------------------
-        # راه‌پله
-        # ----------------------------------------------------
+        text = "\n".join(lines)
 
-        if data == "stairs":
-            await stairs_start(query, context)
-            return
+    await update.callback_query.edit_message_text(
+        text,
+        reply_markup=back_keyboard("generic_result"),
+    )
 
-        # ----------------------------------------------------
-        # شناژ
-        # ----------------------------------------------------
 
-        if data == "ties":
-            await ties_start(query, context)
-            return
+async def generic_cutlist(update, context):
+    result = get_data(context)["result"]
 
-        # ----------------------------------------------------
-        # دیوار
-        # ----------------------------------------------------
+    cutlist = result.get("cut_list", [])
 
-        if data == "walls":
-            await walls_menu(query, context)
-            return
+    if not cutlist:
+        text = "✂️ Cut List موجود نیست."
+    else:
+        lines = [
+            "✂️ Cut List\n",
+            "قطر    طول قطعه    تعداد",
+            "-------------------------",
+        ]
 
-        if data == "wall_shear":
-            await wall_start(query, context, "shear")
-            return
+        for item in cutlist:
+            diameter = item.get("diameter_mm", 0)
+            length = item.get("length_m", 0)
+            count = item.get("count", 0)
 
-        if data == "wall_retaining":
-            await wall_start(query, context, "retaining")
-            return
+            lines.append(
+                f"Φ{diameter:<4} "
+                f"{length:<10.2f} "
+                f"{count}"
+            )
 
-        # ----------------------------------------------------
-        # خلاصه
-        # ----------------------------------------------------
+        text = "\n".join(lines)
 
-        if data == "summary":
-            await summary_menu(query, context)
-            return
+    await update.callback_query.edit_message_text(
+        text,
+        reply_markup=back_keyboard("generic_result"),
+    )
 
-        # ----------------------------------------------------
-        # تنظیمات
-        # ----------------------------------------------------
 
-        if data == "settings":
-            await settings_menu(query, context)
-            return
+# =========================================================
+# STRIP FOOTING
+# =========================================================
 
-        # ----------------------------------------------------
-        # راهنما
-        # ----------------------------------------------------
+async def start_strip(update, context):
+    fields = [
+        ("strip_count", "تعداد نوارها"),
+        ("strip_length", "طول هر نوار (m)"),
+        ("footing_width", "عرض پی (m)"),
+        ("footing_thickness", "ضخامت پی (m)"),
+        ("lean_length", "طول بتن مگر (m)"),
+        ("lean_width", "عرض بتن مگر (m)"),
+        ("lean_thickness", "ضخامت بتن مگر (m)"),
+        ("longitudinal_diameter", "قطر میلگرد طولی (mm)"),
+        ("longitudinal_count", "تعداد میلگرد طولی"),
+        ("transverse_diameter", "قطر میلگرد عرضی (mm)"),
+        ("transverse_spacing", "فاصله میلگرد عرضی (mm)"),
+        ("top_longitudinal_diameter", "قطر میلگرد طولی بالا - 0 اگر ندارد"),
+        ("top_longitudinal_count", "تعداد میلگرد طولی بالا"),
+        ("top_transverse_diameter", "قطر میلگرد عرضی بالا - 0 اگر ندارد"),
+        ("top_transverse_spacing", "فاصله میلگرد عرضی بالا"),
+        ("cover", "کاور (mm)"),
+        ("lap", "درصد اورلپ"),
+    ]
 
-        if data == "help":
-            await help_menu(query, context)
-            return
-
-        # ----------------------------------------------------
-        # نتیجه پی منفرد
-        # ----------------------------------------------------
-
-        if data == "isolated_result":
-            await isolated_result(query, context)
-            return
-
-        if data == "isolated_rebar":
-            await isolated_rebar(query, context)
-            return
-
-        if data == "isolated_cutlist":
-            await isolated_cutlist(query, context)
-            return
-
-    except Exception as e:
-
-        logger.exception("Button error")
-
-        await query.edit_message_text(
-            f"❌ خطا:\n{e}",
-            reply_markup=back_button("home"),
+    def calc(f):
+        return strip_footing(
+            strip_count=int(f["strip_count"]),
+            strip_length_m=f["strip_length"],
+            footing_width_m=f["footing_width"],
+            footing_thickness_m=f["footing_thickness"],
+            lean_length_m=f["lean_length"],
+            lean_width_m=f["lean_width"],
+            lean_thickness_m=f["lean_thickness"],
+            longitudinal_diameter_mm=int(f["longitudinal_diameter"]),
+            longitudinal_count=int(f["longitudinal_count"]),
+            transverse_diameter_mm=int(f["transverse_diameter"]),
+            transverse_spacing_mm=f["transverse_spacing"],
+            top_longitudinal_diameter_mm=(
+                int(f["top_longitudinal_diameter"])
+                if f["top_longitudinal_diameter"] > 0 else None
+            ),
+            top_longitudinal_count=(
+                int(f["top_longitudinal_count"])
+                if f["top_longitudinal_count"] > 0 else None
+            ),
+            top_transverse_diameter_mm=(
+                int(f["top_transverse_diameter"])
+                if f["top_transverse_diameter"] > 0 else None
+            ),
+            top_transverse_spacing_mm=(
+                f["top_transverse_spacing"]
+                if f["top_transverse_spacing"] > 0 else None
+            ),
+            cover_mm=f["cover"],
+            lap_percent=f["lap"],
         )
 
+    await start_generic(
+        update,
+        context,
+        "پی نواری",
+        "🧱 پی نواری",
+        fields,
+        calc,
+        "foundation",
+    )
 
-# ============================================================
-# اجرای بات
-# ============================================================
+
+# =========================================================
+# RAFT
+# =========================================================
+
+async def start_raft(update, context):
+    fields = [
+        ("length", "طول رادیه (m)"),
+        ("width", "عرض رادیه (m)"),
+        ("thickness", "ضخامت رادیه (m)"),
+        ("lean_length", "طول بتن مگر (m)"),
+        ("lean_width", "عرض بتن مگر (m)"),
+        ("lean_thickness", "ضخامت بتن مگر (m)"),
+        ("bottom_x_diameter", "قطر میلگرد پایین X (mm)"),
+        ("bottom_x_spacing", "فاصله پایین X (mm)"),
+        ("bottom_y_diameter", "قطر میلگرد پایین Y (mm)"),
+        ("bottom_y_spacing", "فاصله پایین Y (mm)"),
+        ("top_x_diameter", "قطر میلگرد بالا X - 0 اگر ندارد"),
+        ("top_x_spacing", "فاصله بالا X"),
+        ("top_y_diameter", "قطر میلگرد بالا Y - 0 اگر ندارد"),
+        ("top_y_spacing", "فاصله بالا Y"),
+        ("cover", "کاور (mm)"),
+        ("lap", "درصد اورلپ"),
+    ]
+
+    def calc(f):
+        return raft_foundation(
+            length_m=f["length"],
+            width_m=f["width"],
+            thickness_m=f["thickness"],
+            lean_length_m=f["lean_length"],
+            lean_width_m=f["lean_width"],
+            lean_thickness_m=f["lean_thickness"],
+            bottom_x_diameter_mm=int(f["bottom_x_diameter"]),
+            bottom_x_spacing_mm=f["bottom_x_spacing"],
+            bottom_y_diameter_mm=int(f["bottom_y_diameter"]),
+            bottom_y_spacing_mm=f["bottom_y_spacing"],
+            top_x_diameter_mm=(
+                int(f["top_x_diameter"])
+                if f["top_x_diameter"] > 0 else None
+            ),
+            top_x_spacing_mm=(
+                f["top_x_spacing"]
+                if f["top_x_diameter"] > 0 else None
+            ),
+            top_y_diameter_mm=(
+                int(f["top_y_diameter"])
+                if f["top_y_diameter"] > 0 else None
+            ),
+            top_y_spacing_mm=(
+                f["top_y_spacing"]
+                if f["top_y_diameter"] > 0 else None
+            ),
+            cover_mm=f["cover"],
+            lap_percent=f["lap"],
+        )
+
+    await start_generic(
+        update,
+        context,
+        "پی گسترده",
+        "🧱 پی گسترده / رادیه",
+        fields,
+        calc,
+        "foundation",
+    )
+
+
+# =========================================================
+# COLUMNS
+# =========================================================
+
+async def columns_menu(update, context):
+    clear_state(context)
+
+    keyboard = InlineKeyboardMarkup([
+        [menu_button("ستون مربعی / مستطیلی", "column_rect")],
+        [menu_button("ستون گرد", "column_round")],
+        [menu_button("🔙 بازگشت", "home")],
+    ])
+
+    await update.callback_query.edit_message_text(
+        "🏛️ ستون‌ها\n\nنوع ستون را انتخاب کنید:",
+        reply_markup=keyboard,
+    )
+
+
+async def start_column_rect(update, context):
+    fields = [
+        ("count", "تعداد ستون"),
+        ("length", "طول ستون (m)"),
+        ("width", "عرض ستون (m)"),
+        ("height", "ارتفاع ستون (m)"),
+        ("main_diameter", "قطر میلگرد اصلی (mm)"),
+        ("main_count", "تعداد میلگرد اصلی"),
+        ("tie_diameter", "قطر خاموت (mm)"),
+        ("tie_spacing", "فاصله خاموت (mm)"),
+        ("cover", "کاور (mm)"),
+    ]
+
+    def calc(f):
+        return column_rectangular(
+            count=int(f["count"]),
+            length_m=f["length"],
+            width_m=f["width"],
+            height_m=f["height"],
+            main_diameter_mm=int(f["main_diameter"]),
+            main_count=int(f["main_count"]),
+            tie_diameter_mm=int(f["tie_diameter"]),
+            tie_spacing_mm=f["tie_spacing"],
+            cover_mm=f["cover"],
+        )
+
+    await start_generic(
+        update,
+        context,
+        "ستون مستطیلی",
+        "🏛️ ستون مربعی / مستطیلی",
+        fields,
+        calc,
+        "columns",
+    )
+
+
+async def start_column_round(update, context):
+    fields = [
+        ("count", "تعداد ستون"),
+        ("diameter", "قطر ستون (m)"),
+        ("height", "ارتفاع ستون (m)"),
+        ("main_diameter", "قطر میلگرد اصلی (mm)"),
+        ("main_count", "تعداد میلگرد اصلی"),
+        ("tie_diameter", "قطر خاموت (mm)"),
+        ("tie_spacing", "فاصله خاموت (mm)"),
+        ("cover", "کاور (mm)"),
+    ]
+
+    def calc(f):
+        return column_round(
+            count=int(f["count"]),
+            diameter_m=f["diameter"],
+            height_m=f["height"],
+            main_diameter_mm=int(f["main_diameter"]),
+            main_count=int(f["main_count"]),
+            tie_diameter_mm=int(f["tie_diameter"]),
+            tie_spacing_mm=f["tie_spacing"],
+            cover_mm=f["cover"],
+        )
+
+    await start_generic(
+        update,
+        context,
+        "ستون گرد",
+        "🏛️ ستون گرد",
+        fields,
+        calc,
+        "columns",
+    )
+
+
+# =========================================================
+# BEAMS
+# =========================================================
+
+async def beams_menu(update, context):
+    clear_state(context)
+
+    keyboard = InlineKeyboardMarkup([
+        [menu_button("تیر اصلی", "beam_main")],
+        [menu_button("تیر فرعی", "beam_secondary")],
+        [menu_button("🔙 بازگشت", "home")],
+    ])
+
+    await update.callback_query.edit_message_text(
+        "📐 تیرها\n\nنوع تیر را انتخاب کنید:",
+        reply_markup=keyboard,
+    )
+
+
+async def start_beam(update, context):
+    fields = [
+        ("count", "تعداد تیر"),
+        ("length", "طول هر تیر (m)"),
+        ("width", "عرض تیر (m)"),
+        ("height", "ارتفاع تیر (m)"),
+        ("main_diameter", "قطر میلگرد اصلی (mm)"),
+        ("main_count", "تعداد میلگرد اصلی"),
+        ("top_diameter", "قطر میلگرد بالایی (mm)"),
+        ("top_count", "تعداد میلگرد بالایی"),
+        ("tie_diameter", "قطر خاموت (mm)"),
+        ("tie_spacing", "فاصله خاموت (mm)"),
+        ("cover", "کاور (mm)"),
+    ]
+
+    def calc(f):
+        return beam(
+            count=int(f["count"]),
+            length_m=f["length"],
+            width_m=f["width"],
+            height_m=f["height"],
+            main_diameter_mm=int(f["main_diameter"]),
+            main_count=int(f["main_count"]),
+            top_diameter_mm=int(f["top_diameter"]),
+            top_count=int(f["top_count"]),
+            tie_diameter_mm=int(f["tie_diameter"]),
+            tie_spacing_mm=f["tie_spacing"],
+            cover_mm=f["cover"],
+        )
+
+    mode = get_data(context).get("beam_mode", "تیر اصلی")
+
+    await start_generic(
+        update,
+        context,
+        mode,
+        f"📐 {mode}",
+        fields,
+        calc,
+        "beams",
+    )
+
+
+async def beam_main(update, context):
+    get_data(context)["beam_mode"] = "تیر اصلی"
+    await start_beam(update, context)
+
+
+async def beam_secondary(update, context):
+    get_data(context)["beam_mode"] = "تیر فرعی"
+    await start_beam(update, context)
+
+
+# =========================================================
+# ROOFS
+# =========================================================
+
+async def roofs_menu(update, context):
+    clear_state(context)
+
+    keyboard = InlineKeyboardMarkup([
+        [menu_button("تیرچه یونولیتی", "roof_poly")],
+        [menu_button("تیرچه سفالی", "roof_clay")],
+        [menu_button("تیرچه دوبل", "roof_double")],
+        [menu_button("کرومیت", "roof_kromit")],
+        [menu_button("کامپوزیت", "roof_composite")],
+        [menu_button("عرشه فولادی", "roof_deck")],
+        [menu_button("دال بتنی", "roof_slab")],
+        [menu_button("وافل", "roof_waffle")],
+        [menu_button("🔙 بازگشت", "home")],
+    ])
+
+    await update.callback_query.edit_message_text(
+        "🏠 سقف‌ها\n\nنوع سقف را انتخاب کنید:",
+        reply_markup=keyboard,
+    )
+
+
+async def start_roof(update, context, roof_type):
+    fields = [
+        ("area", "مساحت سقف (m²)"),
+        ("rebar_kg_m2", "مصرف میلگرد (kg/m²)"),
+    ]
+
+    def calc(f):
+        return roof_slab(
+            area_m2=f["area"],
+            roof_type=roof_type,
+            rebar_kg_m2=f["rebar_kg_m2"],
+        )
+
+    await start_generic(
+        update,
+        context,
+        roof_type,
+        f"🏠 {roof_type}",
+        fields,
+        calc,
+        "roofs",
+    )
+
+
+async def roof_poly(update, context):
+    await start_roof(update, context, "تیرچه یونولیتی")
+
+
+async def roof_clay(update, context):
+    await start_roof(update, context, "تیرچه سفالی")
+
+
+async def roof_double(update, context):
+    await start_roof(update, context, "تیرچه دوبل")
+
+
+async def roof_kromit(update, context):
+    await start_roof(update, context, "کرومیت")
+
+
+async def roof_composite(update, context):
+    await start_roof(update, context, "کامپوزیت")
+
+
+async def roof_deck(update, context):
+    await start_roof(update, context, "عرشه فولادی")
+
+
+async def roof_slab_menu(update, context):
+    await start_roof(update, context, "دال بتنی")
+
+
+async def roof_waffle(update, context):
+    await start_roof(update, context, "وافل")
+
+
+# =========================================================
+# STAIRS
+# =========================================================
+
+async def start_stair(update, context):
+    fields = [
+        ("count", "تعداد راه‌پله"),
+        ("width", "عرض راه‌پله (m)"),
+        ("length", "طول شیب/مسیر (m)"),
+        ("thickness", "ضخامت دال (m)"),
+        ("main_diameter", "قطر میلگرد اصلی (mm)"),
+        ("main_spacing", "فاصله میلگرد اصلی (mm)"),
+        ("distribution_diameter", "قطر میلگرد توزیعی (mm)"),
+        ("distribution_spacing", "فاصله میلگرد توزیعی (mm)"),
+        ("cover", "کاور (mm)"),
+    ]
+
+    def calc(f):
+        return stair_slab(
+            count=int(f["count"]),
+            width_m=f["width"],
+            length_m=f["length"],
+            thickness_m=f["thickness"],
+            main_diameter_mm=int(f["main_diameter"]),
+            main_spacing_mm=f["main_spacing"],
+            distribution_diameter_mm=int(
+                f["distribution_diameter"]
+            ),
+            distribution_spacing_mm=f["distribution_spacing"],
+            cover_mm=f["cover"],
+        )
+
+    await start_generic(
+        update,
+        context,
+        "راه‌پله",
+        "🪜 راه‌پله",
+        fields,
+        calc,
+        "home",
+    )
+
+
+# =========================================================
+# TIE BEAMS
+# =========================================================
+
+async def ties_menu(update, context):
+    clear_state(context)
+
+    keyboard = InlineKeyboardMarkup([
+        [menu_button("شناژ", "tie_beam")],
+        [menu_button("کلاف", "tie_cowl")],
+        [menu_button("🔙 بازگشت", "home")],
+    ])
+
+    await update.callback_query.edit_message_text(
+        "🔗 شناژ و کلاف\n\nانتخاب کنید:",
+        reply_markup=keyboard,
+    )
+
+
+async def start_tie(update, context):
+    fields = [
+        ("count", "تعداد"),
+        ("length", "طول هر قطعه (m)"),
+        ("width", "عرض (m)"),
+        ("height", "ارتفاع (m)"),
+        ("main_diameter", "قطر میلگرد طولی (mm)"),
+        ("main_count", "تعداد میلگرد طولی"),
+        ("tie_diameter", "قطر خاموت (mm)"),
+        ("tie_spacing", "فاصله خاموت (mm)"),
+        ("cover", "کاور (mm)"),
+    ]
+
+    def calc(f):
+        return tie_beam(
+            count=int(f["count"]),
+            length_m=f["length"],
+            width_m=f["width"],
+            height_m=f["height"],
+            main_diameter_mm=int(f["main_diameter"]),
+            main_count=int(f["main_count"]),
+            tie_diameter_mm=int(f["tie_diameter"]),
+            tie_spacing_mm=f["tie_spacing"],
+            cover_mm=f["cover"],
+        )
+
+    mode = get_data(context).get("tie_mode", "شناژ")
+
+    await start_generic(
+        update,
+        context,
+        mode,
+        f"🔗 {mode}",
+        fields,
+        calc,
+        "ties",
+    )
+
+
+async def tie_beam_start(update, context):
+    get_data(context)["tie_mode"] = "شناژ"
+    await start_tie(update, context)
+
+
+async def tie_cowl(update, context):
+    get_data(context)["tie_mode"] = "کلاف"
+    await start_tie(update, context)
+
+
+# =========================================================
+# WALLS
+# =========================================================
+
+async def walls_menu(update, context):
+    clear_state(context)
+
+    keyboard = InlineKeyboardMarkup([
+        [menu_button("دیوار برشی", "wall_shear")],
+        [menu_button("دیوار حائل", "wall_retaining")],
+        [menu_button("🔙 بازگشت", "home")],
+    ])
+
+    await update.callback_query.edit_message_text(
+        "🧱 دیوارها\n\nنوع دیوار را انتخاب کنید:",
+        reply_markup=keyboard,
+    )
+
+
+async def start_wall(update, context):
+    fields = [
+        ("count", "تعداد دیوار"),
+        ("length", "طول دیوار (m)"),
+        ("height", "ارتفاع دیوار (m)"),
+        ("thickness", "ضخامت دیوار (m)"),
+        ("vertical_diameter", "قطر میلگرد قائم (mm)"),
+        ("vertical_spacing", "فاصله میلگرد قائم (mm)"),
+        ("horizontal_diameter", "قطر میلگرد افقی (mm)"),
+        ("horizontal_spacing", "فاصله میلگرد افقی (mm)"),
+        ("cover", "کاور (mm)"),
+    ]
+
+    def calc(f):
+        return wall_concrete(
+            count=int(f["count"]),
+            length_m=f["length"],
+            height_m=f["height"],
+            thickness_m=f["thickness"],
+            vertical_diameter_mm=int(f["vertical_diameter"]),
+            vertical_spacing_mm=f["vertical_spacing"],
+            horizontal_diameter_mm=int(
+                f["horizontal_diameter"]
+            ),
+            horizontal_spacing_mm=f["horizontal_spacing"],
+            cover_mm=f["cover"],
+        )
+
+    mode = get_data(context).get("wall_mode", "دیوار برشی")
+
+    await start_generic(
+        update,
+        context,
+        mode,
+        f"🧱 {mode}",
+        fields,
+        calc,
+        "walls",
+    )
+
+
+async def wall_shear(update, context):
+    get_data(context)["wall_mode"] = "دیوار برشی"
+    await start_wall(update, context)
+
+
+async def wall_retaining(update, context):
+    get_data(context)["wall_mode"] = "دیوار حائل"
+    await start_wall(update, context)
+
+
+# =========================================================
+# SUMMARY
+# =========================================================
+
+async def project_summary(update, context):
+    clear_state(context)
+
+    text = (
+        "📊 خلاصه پروژه\n\n"
+        "فعلاً این بخش آماده اتصال به محاسبات تجمعی پروژه است.\n\n"
+        "در نسخه بعدی می‌توانیم نتایج فونداسیون، "
+        "ستون، تیر، سقف، راه‌پله، شناژ و دیوار را "
+        "در یک جمع کل نمایش دهیم."
+    )
+
+    await update.callback_query.edit_message_text(
+        text,
+        reply_markup=back_keyboard("home"),
+    )
+
+
+# =========================================================
+# SETTINGS
+# =========================================================
+
+async def settings_menu(update, context):
+    clear_state(context)
+
+    keyboard = InlineKeyboardMarkup([
+        [menu_button("🇮🇷 فارسی", "lang_fa")],
+        [menu_button("🇬🇧 English", "lang_en")],
+        [menu_button("🔙 بازگشت", "home")],
+    ])
+
+    await update.callback_query.edit_message_text(
+        "⚙️ تنظیمات\n\n"
+        "زبان را انتخاب کنید:",
+        reply_markup=keyboard,
+    )
+
+
+# =========================================================
+# HELP
+# =========================================================
+
+async def help_menu(update, context):
+    clear_state(context)
+
+    text = (
+        "ℹ️ راهنما\n\n"
+        "این ربات برای برآورد اولیه مقادیر اسکلت بتنی "
+        "طراحی شده است.\n\n"
+        "📌 برای نتیجه دقیق‌تر باید ابعاد واقعی عضو، "
+        "آرایش میلگرد و جزئیات نقشه وارد شود.\n\n"
+        "🔩 جزئیات میلگرد و ✂️ Cut List به‌صورت "
+        "جداگانه نمایش داده می‌شوند."
+    )
+
+    await update.callback_query.edit_message_text(
+        text,
+        reply_markup=back_keyboard("home"),
+    )
+
+
+# =========================================================
+# CALLBACK ROUTER
+# =========================================================
+
+async def buttons(update, context):
+    query = update.callback_query
+    await query.answer()
+
+    callback = query.data
+
+    # ---------- HOME ----------
+    if callback == "home":
+        await show_home(update, context)
+        return
+
+    # ---------- FOUNDATION ----------
+    if callback == "foundation":
+        await foundation_menu(update, context)
+        return
+
+    if callback == "foundation_isolated":
+        await start_isolated(update, context)
+        return
+
+    if callback == "foundation_strip":
+        await start_strip(update, context)
+        return
+
+    if callback == "foundation_raft":
+        await start_raft(update, context)
+        return
+
+    if callback == "isolated_result":
+        await show_isolated_result(update, context)
+        return
+
+    if callback == "isolated_rebar":
+        await isolated_rebar(update, context)
+        return
+
+    if callback == "isolated_cutlist":
+        await isolated_cutlist(update, context)
+        return
+
+    # ---------- COLUMNS ----------
+    if callback == "columns":
+        await columns_menu(update, context)
+        return
+
+    if callback == "column_rect":
+        await start_column_rect(update, context)
+        return
+
+    if callback == "column_round":
+        await start_column_round(update, context)
+        return
+
+    # ---------- BEAMS ----------
+    if callback == "beams":
+        await beams_menu(update, context)
+        return
+
+    if callback == "beam_main":
+        await beam_main(update, context)
+        return
+
+    if callback == "beam_secondary":
+        await beam_secondary(update, context)
+        return
+
+    # ---------- ROOFS ----------
+    if callback == "roofs":
+        await roofs_menu(update, context)
+        return
+
+    if callback == "roof_poly":
+        await roof_poly(update, context)
+        return
+
+    if callback == "roof_clay":
+        await roof_clay(update, context)
+        return
+
+    if callback == "roof_double":
+        await roof_double(update, context)
+        return
+
+    if callback == "roof_kromit":
+        await roof_kromit(update, context)
+        return
+
+    if callback == "roof_composite":
+        await roof_composite(update, context)
+        return
+
+    if callback == "roof_deck":
+        await roof_deck(update, context)
+        return
+
+    if callback == "roof_slab":
+        await roof_slab_menu(update, context)
+        return
+
+    if callback == "roof_waffle":
+        await roof_waffle(update, context)
+        return
+
+    # ---------- STAIRS ----------
+    if callback == "stairs":
+        await start_stair(update, context)
+        return
+
+    # ---------- TIES ----------
+    if callback == "ties":
+        await ties_menu(update, context)
+        return
+
+    if callback == "tie_beam":
+        await tie_beam_start(update, context)
+        return
+
+    if callback == "tie_cowl":
+        await tie_cowl(update, context)
+        return
+
+    # ---------- WALLS ----------
+    if callback == "walls":
+        await walls_menu(update, context)
+        return
+
+    if callback == "wall_shear":
+        await wall_shear(update, context)
+        return
+
+    if callback == "wall_retaining":
+        await wall_retaining(update, context)
+        return
+
+    # ---------- GENERIC ----------
+    if callback == "generic_result":
+        await show_generic_result(update, context)
+        return
+
+    if callback == "generic_rebar":
+        await generic_rebar(update, context)
+        return
+
+    if callback == "generic_cutlist":
+        await generic_cutlist(update, context)
+        return
+
+    # ---------- SUMMARY ----------
+    if callback == "summary":
+        await project_summary(update, context)
+        return
+
+    # ---------- SETTINGS ----------
+    if callback == "settings":
+        await settings_menu(update, context)
+        return
+
+    # ---------- HELP ----------
+    if callback == "help":
+        await help_menu(update, context)
+        return
+
+    await query.edit_message_text(
+        t(context, "unknown"),
+        reply_markup=back_keyboard("home"),
+    )
+
+
+# =========================================================
+# TEXT MESSAGE ROUTER
+# =========================================================
+
+async def receive(update, context):
+    state = get_state(context)
+
+    if state == "isolated":
+        await isolated_receive(update, context)
+        return
+
+    if state == "generic":
+        await generic_receive(update, context)
+        return
+
+    await update.message.reply_text(
+        "لطفاً از منوی ربات استفاده کنید."
+    )
+
+
+# =========================================================
+# ERROR HANDLER
+# =========================================================
+
+async def error_handler(update, context):
+    logger.exception(
+        "Unhandled exception:",
+        exc_info=context.error,
+    )
+
+
+# =========================================================
+# MAIN - RENDER WEBHOOK
+# =========================================================
 
 def main():
 
-    if not TOKEN:
-
+    if not BOT_TOKEN:
         raise RuntimeError(
-            "BOT_TOKEN در Environment Variables تنظیم نشده است."
+            "BOT_TOKEN environment variable is not set."
         )
+
+    if not RENDER_EXTERNAL_URL:
+        raise RuntimeError(
+            "RENDER_EXTERNAL_URL environment variable is not set."
+        )
+
+    webhook_url = (
+        RENDER_EXTERNAL_URL.rstrip("/")
+        + "/telegram"
+    )
 
     application = (
         Application.builder()
-        .token(TOKEN)
+        .token(BOT_TOKEN)
         .build()
     )
 
+    # Commands
     application.add_handler(
-        CommandHandler(
-            "start",
-            start,
-        )
+        CommandHandler("start", start)
     )
 
+    # Language
     application.add_handler(
         CallbackQueryHandler(
-            button_handler,
+            cb_language,
+            pattern=r"^lang_(fa|en)$"
         )
     )
 
+    # All inline buttons
+    application.add_handler(
+        CallbackQueryHandler(buttons)
+    )
+
+    # Text input
     application.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
-            text_handler,
+            receive
         )
     )
 
-    print("Bot is running...")
+    # Error handler
+    application.add_error_handler(error_handler)
 
-    application.run_polling()
+    print("======================================")
+    print("Concrete Structure Bot")
+    print("Render Webhook Mode")
+    print("======================================")
+    print(f"Port: {PORT}")
+    print(f"Webhook: {webhook_url}")
+    print("Bot started successfully.")
+    print("======================================")
+
+    application.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path="telegram",
+        webhook_url=webhook_url,
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True,
+    )
 
 
 if __name__ == "__main__":
